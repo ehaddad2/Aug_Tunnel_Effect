@@ -105,8 +105,8 @@ def main():
         else:
             backbone_results = trainer.train_backbone_serial()
         
-    if backbone_results:
-        if args.use_wandb:
+        if args.use_wandb and backbone_results:
+            # Prepare data for charts
             backbone_accuracy_data = [
                 [epoch + 1, value, series]
                 for epoch, (train_acc, test_acc) in enumerate(
@@ -122,6 +122,7 @@ def main():
                 for value, series in zip([train_loss, test_loss], ["Backbone Train Loss", "Backbone Test Loss"])
             ]
 
+            # Create charts without logging tables
             backbone_accuracy_chart = wandb.plot.line(
                 table=wandb.Table(data=backbone_accuracy_data, columns=["Epoch", "Value", "Series"]),
                 x="Epoch",
@@ -137,7 +138,7 @@ def main():
                 title="Backbone Loss Over Epochs"
             )
 
-            # Log the charts to wandb
+            # Log only the charts
             wandb.log({
                 "Backbone Accuracy Chart": backbone_accuracy_chart,
                 "Backbone Loss Chart": backbone_loss_chart
@@ -206,8 +207,8 @@ def main():
                 title=f"{datasets[i]} Probe Loss Over Epochs"
             )
             wandb.log({
-                "Accuracy Chart": accuracy_chart,
-                "Loss Chart": loss_chart
+                f"{datasets[i]} Accuracy Chart": accuracy_chart,
+                f"{datasets[i]} Loss Chart": loss_chart
             })
             results.append([
                 i+1,
