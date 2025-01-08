@@ -7,9 +7,6 @@ import os
 import pandas as pd
 import json
 from pathlib import Path
-import signal
-import numpy as np
-import psutil
 import analysis
 import torch.multiprocessing as mp
 PROBE_DATASET_BASE_PATH = "./data/OOD/"
