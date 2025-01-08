@@ -7,8 +7,20 @@ Usage
 ### Backbone Training
 To train a specific backbone model (ie: ResNet-18) from scratch using a preset augmentation setting, use the following cmd: 
 
-`python backbone.py --model MODEL_NUM --backbone_pth BACKBONE_SAVE_PATH
---dataset DATASET_NAME --classes NUM_CLASSES --aug_setting AUG_SETTING --num_unique NUM_UNIQUE_SAMPLES --batch_size BATCH_SIZE --lr LEARNING_RATE --num_epochs NUM_EPOCHS --warmup_epochs NUM_WARMUP_EPOCHS --use_cos_annealing [true,false] --cuda_devices [DEVICE IDS] --use_writer [true,false]`
+"python backbone.py \
+    --model 0 \
+    --backbone_pth "/path/to/save/model.pth" \
+    --dataset "/path/to/dataset" \
+    --classes 100 \
+    --aug_setting 3 \
+    --num_unique 6500 \
+    --batch_size 32 \
+    --lr 0.001 \
+    --num_epochs 20 \
+    --warmup_epochs 5 \
+    --use_cos_annealing true \
+    --cuda_devices 0 1 \
+    --use_writer true"
 
 Backbone Models (configured based on number of classes):
 
@@ -118,7 +130,125 @@ Note: x.x represents experiment#.backbone#
 4. Re-run probes
 
     1. more OOD datasets (eventually audio)
+        a. Image-Based
+            aircrafts
+            cifar10
+            cub200
+            flowers102
+            stl10
+            NINCO
+            Oxford IIIT Pet
+            HAM10000
+
+        b. Audio-Based
+            ESC-50
+            (AudioSet)
+            (Common Voice)
+
     2. Predict % OOD performance retained, Pearson Correlation, ID/OOD alignmentbased on probe results
 
 5. Build GB SHAP model, collect all ID/OOD results, and run through it
 6. Peform analysis based on trained SHAP, if more analysis is needed, use 224 x 224 for those experiments.
+
+
+Random Horizontal Flip (p=0.5)
+Random Grayscale (p=0.1)
+Random Resize Crop (size=(224x224 | 32x32))
+Random Affine (degrees=(-15,15))
+Scale Jitter (size=(224x224 | 32x32), interpolation=InterpolationMode.bilinear)
+Gaussian Blur (p=0.5, radius_min=0.1, radius_max=2.0)
+Gaussian Noise (mean=0, sigma=0.1)
+Color Jitter (brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2)
+Color Distortion (brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2)
+Random Invert (p=0.5)
+Random Solarize (threshold=128, p=0.5)
+Random Autocontrast (p=0.5)
+CutOut (p=1, size=(8x8))
+MixUp (p=1, alpha=1.0)
+CutMix (p=1, beta=1.0)
+
+
+kmeans init combos:
+[
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+[0,1,0,0,0,0,0,0,0,0,0,0,0,0,0]
+[0,0,1,0,0,0,0,0,0,0,0,0,0,0,0]
+[0,0,0,1,0,0,0,0,0,0,0,0,0,0,0]
+[0,0,0,0,1,0,0,0,0,0,0,0,0,0,0]
+[0,0,0,0,0,1,0,0,0,0,0,0,0,0,0]
+[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0]
+[0,0,0,0,0,0,0,1,0,0,0,0,0,0,0]
+[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0]
+[0,0,0,0,0,0,0,0,0,1,0,0,0,0,0]
+[0,0,0,0,0,0,0,0,0,0,1,0,0,0,0]
+[0,0,0,0,0,0,0,0,0,0,0,1,0,0,0]
+[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0]
+[0,0,0,0,0,0,0,0,0,0,0,0,0,1,0]
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]
+
+[0,0,0,1,0,1,1,0,1,1,1,0]
+[1,0,0,0,0,1,0,0,0,0,1,1]
+[1,1,1,0,0,1,1,1,0,1,1,1]
+[1,0,1,1,0,0,1,0,0,1,0,0]
+[0,0,0,1,1,0,1,1,0,0,0,0]
+[1,1,1,1,1,0,1,1,0,0,0,1]
+[1,0,1,1,1,1,1,1,1,1,1,0]
+[1,1,0,0,0,1,1,0,1,0,0,0]
+[0,0,1,0,0,0,1,0,1,1,1,0]
+[0,1,1,0,1,0,1,0,0,1,1,1]
+[0,1,0,1,1,0,0,1,1,1,0,1]
+[1,1,1,0,1,0,1,1,1,1,1,0]
+[1,0,0,1,1,1,0,1,0,0,1,1]
+[1,1,0,0,1,1,1,1,1,0,0,1]
+[0,1,1,0,1,0,1,1,0,0,1,0]
+[0,0,1,1,0,1,1,0,1,1,0,1]
+[1,0,0,0,1,0,0,0,1,0,0,1]
+[0,0,0,0,1,1,1,0,1,1,0,0]
+[1,1,0,1,0,0,1,1,1,1,1,1]
+[1,0,0,1,1,1,0,0,1,0,0,0]
+[1,0,1,1,1,1,1,0,1,1,1,1]
+[0,1,0,1,0,1,0,1,0,1,0,0]
+[1,1,1,1,0,1,1,1,1,0,0,1]
+[1,1,1,0,0,0,1,0,0,0,1,0]
+[1,1,0,0,0,0,0,1,1,0,1,0]
+[0,0,1,0,1,1,1,0,0,1,1,0]
+[0,1,1,0,1,1,1,1,1,1,0,1]
+[0,0,0,0,1,0,0,1,0,1,1,0]
+[0,0,1,0,0,1,1,1,1,1,1,0]
+[1,0,1,0,1,0,0,1,1,0,1,1]
+[1,0,1,1,1,0,0,1,1,1,0,1]
+[1,1,1,1,0,1,1,0,1,0,1,0]
+[0,1,0,0,1,1,1,1,0,1,0,0]
+[0,1,0,1,1,0,1,0,1,0,0,0]
+[0,1,1,1,0,0,0,1,1,1,0,0]
+[0,0,1,0,1,1,1,1,0,0,0,1]
+[0,0,1,0,0,0,0,0,0,1,1,0]
+[0,1,1,1,0,1,1,1,0,0,1,0]
+[0,0,1,1,1,0,1,0,1,0,0,0]
+[1,0,1,0,1,0,0,0,1,0,1,0]
+[0,1,1,0,1,1,0,1,0,0,1,1]
+[1,1,0,1,0,1,0,1,0,1,1,1]
+[1,0,1,1,0,0,0,0,0,0,0,1]
+[0,1,0,0,1,1,0,0,1,1,1,0]
+[1,1,0,1,0,1,0,0,1,1,1,0]
+[1,1,0,0,1,1,0,0,0,1,0,1]
+[0,1,0,1,1,1,1,0,1,1,1,0]
+[0,1,0,0,0,1,0,0,0,0,1,1]
+[1,0,1,0,1,0,0,0,0,1,1,0]
+[0,0,0,1,1,1,1,0,1,0,1,1]
+[0,0,1,1,0,0,0,0,1,1,1,1]
+[0,0,0,0,0,0,0,1,1,0,0,0]
+[1,1,0,0,1,0,0,1,0,1,0,0]
+[1,0,1,0,0,1,0,1,1,0,0,1]
+[1,0,1,1,0,0,0,0,1,1,0,1]
+[1,1,0,0,0,1,1,0,0,1,0,0]
+[0,1,1,1,0,1,0,0,0,1,0,1]
+[1,0,0,0,1,1,1,0,1,0,1,1]
+[0,0,1,0,0,0,0,1,0,0,1,0]
+[0,0,0,1,1,0,1,0,0,1,0,1]
+[1,0,1,0,0,1,1,1,1,1,0,0]
+[0,1,1,1,1,0,0,0,0,1,1,0]
+[1,0,0,0,1,1,1,1,0,0,0,0]
+[1,1,0,0,0,0,1,1,0,1,1,0]
+]

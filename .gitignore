@@ -1,0 +1,5 @@
+data/
+figures/
+models/
+__pycache__/
+wandb
