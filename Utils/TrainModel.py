@@ -36,11 +36,18 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
     train_loss, train_acc = 0, 0
     world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    
+    # Create tensors to accumulate loss and accuracy
+    if torch.distributed.is_initialized():
+        total_loss = torch.tensor(0., device=device)
+        total_acc = torch.tensor(0., device=device)
+    
     if rank == 0: pbar=tqdm(total=len(dataloader), desc=f'Training Epoch {ep}')
     
     for batch_idx, (X, y) in enumerate(dataloader):
-        #if batch_idx == 5: break
         X, y = X.to(device), y.to(device)
+        
+        """
         if cutmix_beta > 0: #perform cutmix
             X_cm, y_m, lam = ManualAugs.cutmix_data(X, y, cutmix_beta)
             outputs = model(X_cm)
@@ -60,35 +67,38 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
         else: #no reg
             outputs = model(X)
             loss = loss_fn(outputs, y)
+        """
 
+        outputs = model(X)
+        loss = loss_fn(outputs, y)
         predicted = outputs.argmax(dim=1)
+        
         acc = (predicted == y).float().mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         
+        batch_loss = loss.item()
+        batch_acc = acc.item()
         if torch.distributed.is_initialized():
-            loss_tensor = torch.tensor([loss.item()], device=device)
-            acc_tensor = torch.tensor([acc.item()], device=device)
-            
-            torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
-            torch.distributed.all_reduce(acc_tensor, op=torch.distributed.ReduceOp.SUM)
-            
-            batch_loss = loss_tensor.item() / world_size
-            batch_acc = acc_tensor.item() / world_size
+            total_loss += batch_loss
+            total_acc += batch_acc
         else:
-            batch_loss = loss.item()
-            batch_acc = acc.item()
-            
-        train_loss += batch_loss
-        train_acc += batch_acc
+            train_loss += batch_loss
+            train_acc += batch_acc
         
         if rank == 0:
             pbar.set_postfix({
-                'Train Loss': f'{train_loss/(batch_idx+1):.4f}',
-                'Train Acc': f'{train_acc/(batch_idx+1):.4f}'
+                'Train Loss': f'{batch_loss:.4f}',
+                'Train Acc': f'{batch_acc:.4f}'
             })
             pbar.update(1)
+    
+    if torch.distributed.is_initialized():
+        torch.distributed.all_reduce(total_loss, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(total_acc, op=torch.distributed.ReduceOp.SUM)
+        train_loss = total_loss.item() / world_size
+        train_acc = total_acc.item() / world_size
     
     if rank == 0: pbar.close()
     train_loss /= len(dataloader)

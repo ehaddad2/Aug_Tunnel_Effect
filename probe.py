@@ -55,8 +55,8 @@ class LinearProbeTrainer:
         self.use_wandb = use_wandb
         SEED = seed
         mean, std = AugDatasets.ManualAugs.get_mean_std(self.dataset_name)
-        train_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*15, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Train')
-        test_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*15, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Test')
+        train_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Train')
+        test_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Test')
         train, test, num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, train_T, test_T, seed)
         self.model = self.initialize_probe_model(num_classes)
         self.train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=self.num_workers)

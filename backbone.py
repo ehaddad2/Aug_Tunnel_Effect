@@ -15,6 +15,7 @@ import tqdm
 import time
 import psutil
 from torch.multiprocessing import Queue
+from torchvision import transforms as T
 
 from Utils import TrainModel, CustomDatasets, ManualAugs
 import Models
@@ -39,13 +40,14 @@ def ddp_setup(rank, world_size):
     torch.cuda.set_device(rank)
 
 class BackboneTrainer:
-    def __init__(self, dataset_name, num_workers, architecture, backbone_pth, aug_setting, img_dims, lr, label_smoothing, epochs, cuda_devices, device, seed, wandb, use_wandb, warmup_epochs=5, use_cos_annealing=True):
+    def __init__(self, dataset_name, num_workers, architecture, backbone_pth, man_aug_setting, policy_aug_setting, img_dims, lr, label_smoothing, epochs, cuda_devices, device, seed, wandb, use_wandb, warmup_epochs=5, use_cos_annealing=True):
         self.dataset = dataset_name
         self.num_workers = num_workers
         self.architecture = architecture
         self.device = device
         self.backbone_pth = Path(backbone_pth)
-        self.aug_setting = aug_setting
+        self.man_aug_setting = man_aug_setting
+        self.policy_aug_setting = policy_aug_setting
         self.img_dims = img_dims
         self.epochs = epochs
         self.lr = lr
@@ -58,10 +60,25 @@ class BackboneTrainer:
         SEED = seed
 
         mean, std = ManualAugs.get_mean_std(dataset_name)
-        train_T,self.cutmix_b,self.mixup_a = ManualAugs.get_transformations(mean, std, aug_array=aug_setting, img_dims=self.img_dims, verbose="Backbone Train")
-        test_T,_,_ = ManualAugs.get_transformations(mean, std, aug_array=[0]*15, img_dims=self.img_dims, verbose="Backbone Test")
-        self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, train_T, test_T, seed)
-
+        test_T,_,_ = ManualAugs.get_transformations(mean, std, aug_array=[0]*14, img_dims=self.img_dims, verbose="Backbone Test") # manual augs
+        if not sum(self.policy_aug_setting):
+            train_T,self.cutmix_b,self.mixup_a = ManualAugs.get_transformations(mean, std, aug_array=man_aug_setting, img_dims=self.img_dims, verbose="Backbone Train")
+            self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, train_T, test_T, seed)
+        else:
+            self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, T.Compose([]), test_T, seed)
+            polices = []
+            if self.policy_aug_setting[0]:
+                polices.append('swav')
+                self.train = ManualAugs.MultiCropDataset(self.train, [224,96], [2,6], polices=polices)
+            
+            if self.policy_aug_setting[1]:
+                polices.append('barlow')
+                self.train = ManualAugs.MultiCropDataset(self.train, [224,224], [1,1], polices=polices)
+            
+            if self.policy_aug_setting[2]:
+                polices.append('dino')
+                self.train = ManualAugs.MultiCropDataset(self.train, [224,224,96], [1,1,6], polices=polices)
+       
         models = Models.Models(device)
         self.model = models.get_model(self.architecture, num_classes=self.num_classes)
 
@@ -110,8 +127,8 @@ def DDP_train(rank, world_size, num_workers, model, train, test, batch_size, epo
 
     train_sampler = DistributedSampler(train, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED)
     test_sampler = DistributedSampler(test, num_replicas=world_size, rank=rank, shuffle=False, seed=SEED)
-    train_loader = DataLoader(train, batch_size, sampler=train_sampler, num_workers=num_workers, pin_memory=True)
-    test_loader = DataLoader(test, batch_size, sampler=test_sampler, num_workers=num_workers, pin_memory=True)
+    train_loader = DataLoader(train, batch_size, sampler=train_sampler, num_workers=num_workers, pin_memory=True, persistent_workers=True)
+    test_loader = DataLoader(test, batch_size, sampler=test_sampler, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(rank)
     opt = torch.optim.AdamW(ddp_model.parameters(), lr=lr, weight_decay=0.05)
     

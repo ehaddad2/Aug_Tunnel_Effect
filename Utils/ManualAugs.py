@@ -4,10 +4,11 @@ import torch
 import random
 import numpy as np
 from torch.utils.data import Dataset
+from torchvision import datasets
 import torch
 import torch.nn.functional as F
 from typing import Tuple, Optional
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 
 #seeding:
 SEED = 30
@@ -16,6 +17,55 @@ torch.cuda.manual_seed_all(SEED)
 random.seed(SEED)
 np.random.seed(SEED)
 torch.backends.cudnn.benchmark = False
+
+
+"""
+Helper funcs/classes
+"""
+class PadToSize(object):
+    def __init__(self, out_H=224, out_W=224):
+        self.out_H = out_H
+        self.out_W = out_W
+
+    def __call__(self, img:torch.Tensor):
+        C, H, W = img.shape
+        pad_H = max(0, self.out_H - H)
+        pad_W = max(0, self.out_W - W)
+        img = F.pad(img, (0, pad_W, 0, pad_H), value=0) #pad on bottom & right
+        return img
+
+class GaussianBlur(object):
+    """
+    Apply Gaussian Blur to the PIL image.
+    """
+    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.):
+        self.prob = p
+        self.radius_min = radius_min
+        self.radius_max = radius_max
+
+    def __call__(self, img):
+        do_it = random.random() <= self.prob
+        if not do_it:
+            return img
+
+        return img.filter(
+            ImageFilter.GaussianBlur(
+                radius=random.uniform(self.radius_min, self.radius_max)
+            )
+        )
+
+class Solarization(object):
+    """
+    Apply Solarization to the PIL image.
+    """
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            return ImageOps.solarize(img)
+        else:
+            return img
 
 class AugDataset(Dataset):
     def __init__(self, dataset, transform=None):
@@ -40,22 +90,6 @@ class RandomApply(nn.Module): #from: https://arxiv.org/pdf/2006.07733
         if random.random() > self.p:
             return x
         return self.fn(x)
-    
-def get_mean_std(dataset_name:str):
-    mean,std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.255] #defaults
-    dataset_name = str.lower(dataset_name)
-    if dataset_name == 'cifar-10': mean,std = [0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2615]
-    elif dataset_name == 'cifar-100': mean,std = [0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761]
-    elif 'mnist' in dataset_name: mean,std = [0.1307], [0.3081]
-    elif 'imagenet' in dataset_name: mean,std = [0.482, 0.458, 0.408], [0.269, 0.261, 0.276]
-    return mean,std
-
-def custom(dataset, transforms) -> Dataset:
-    if not isinstance(transforms, Transforms.Compose): 
-        composed = Transforms.Compose(*transforms)
-    else: composed = transforms
-    return AugDataset(dataset, composed)
-
 class GaussianNoise:
     def __init__(self, mean=0.0, std=0.1):
         self.mean = mean
@@ -81,13 +115,193 @@ class PILRandomGaussianBlur(object):
         if not do_it: return img
         return img.filter(ImageFilter.GaussianBlur(radius=random.uniform(self.radius_min, self.radius_max)))
     
+def get_mean_std(dataset_name:str):
+    mean,std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.255] #defaults
+    dataset_name = str.lower(dataset_name)
+    if dataset_name == 'cifar-10': mean,std = [0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2615]
+    elif dataset_name == 'cifar-100': mean,std = [0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761]
+    elif 'mnist' in dataset_name: mean,std = [0.1307], [0.3081]
+    elif 'imagenet' in dataset_name: mean,std = [0.482, 0.458, 0.408], [0.269, 0.261, 0.276]
+    return mean,std
+
+def custom(dataset, transforms) -> Dataset:
+    if not isinstance(transforms, Transforms.Compose): 
+        composed = Transforms.Compose(*transforms)
+    else: composed = transforms
+    return AugDataset(dataset, composed)
+
+def rand_bbox(size, lam): #based on https://github.com/clovaai/CutMix-PyTorch/blob/master/train.py
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = np.int(W * cut_rat)
+    cut_h = np.int(H * cut_rat)
+
+    # uniform
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+    
 def color_distortion(brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2): #based on https://arxiv.org/pdf/2006.09882
     color_jitter = Transforms.ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
     rnd_color_jitter = RandomApply(color_jitter, p=0.8)
     rnd_gray = Transforms.RandomGrayscale(p=0.2)
-    return rnd_color_jitter, rnd_gray
+    return Transforms.Compose([rnd_color_jitter, rnd_gray])
 
-class ScaleJitter(object): #NEED TO REVIEW
+"""
+Aug Polices
+"""
+class MultiCropDataset(torch.utils.data.Dataset):
+    """
+    Modified from SwAV: https://arxiv.org/pdf/2006.09882
+    """
+    def __init__(
+        self,
+        dataset,
+        size_crops,
+        nmb_crops,
+        return_index=False,
+        polices = [],
+        out_size = (224,224)
+    ):
+        assert len(size_crops) == len(nmb_crops)
+        assert len(polices) > 0
+        self.dataset = dataset
+        self.polices = polices
+        self.return_index = return_index
+        self.num_transforms = sum(nmb_crops) * len(polices)
+
+        color_transform = [color_distortion(), PILRandomGaussianBlur()]
+        mean = [0.485, 0.456, 0.406]
+        std = [0.228, 0.224, 0.225]
+        trans = []
+        for i in range(len(size_crops)):
+            for p in polices:
+                if p == 'swav':
+                    trans.extend([Transforms.Compose([
+                        Transforms.RandomResizedCrop(size_crops[i], scale=([0.14, 0.05][i], [1, 0.14][i])),
+                        Transforms.RandomHorizontalFlip(p=0.5),
+                        Transforms.Compose(color_transform),
+                        Transforms.ToTensor(),
+                        Transforms.Normalize(mean=mean, std=std),
+                        PadToSize(out_size[0], out_size[1])])
+                    ] * nmb_crops[i])
+                
+                elif p == 'barlow':
+                    if i == 0:  # global crops
+                        trans.extend([
+                            Transforms.Compose([
+                                Transforms.RandomResizedCrop(224, interpolation=Transforms.InterpolationMode.BICUBIC),
+                                Transforms.RandomHorizontalFlip(p=0.5),
+                                Transforms.RandomApply([Transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)], p=0.8),
+                                Transforms.RandomGrayscale(p=0.2),
+                                GaussianBlur(p=1.0),
+                                Solarization(p=0.0),
+                                Transforms.ToTensor(),
+                                Transforms.Normalize(mean=mean, std=std),
+                            ])
+                        ] * nmb_crops[i])
+                    else:  # local crops
+                        trans.extend([
+                            Transforms.Compose([
+                                Transforms.RandomResizedCrop(224, interpolation=Transforms.InterpolationMode.BICUBIC),
+                                Transforms.RandomHorizontalFlip(p=0.5),
+                                Transforms.RandomApply([Transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)], p=0.8),
+                                Transforms.RandomGrayscale(p=0.2),
+                                GaussianBlur(p=0.1),
+                                Solarization(p=0.2),
+                                Transforms.ToTensor(),
+                                Transforms.Normalize(mean=mean, std=std),
+                            ])
+                        ] * nmb_crops[i])
+
+                elif p == 'dino': #adopted from https://arxiv.org/pdf/2104.14294
+                    flip_and_color_jitter = Transforms.Compose([
+                        Transforms.RandomHorizontalFlip(p=0.5),
+                        Transforms.RandomApply([
+                            Transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)], p=0.8),
+                            Transforms.RandomGrayscale(p=0.2)])
+                    if i == 0:  # first global
+                        trans.extend([
+                            Transforms.Compose([
+                                Transforms.RandomResizedCrop(size_crops[i], scale=(0.32,1), interpolation=Transforms.InterpolationMode.BICUBIC),
+                                flip_and_color_jitter,
+                                GaussianBlur(p=1),
+                                Transforms.ToTensor(),
+                                Transforms.Normalize(mean=mean, std=std),
+                            ])
+                        ] * nmb_crops[i])
+                    elif i==1:  # second global
+                        trans.extend([
+                            Transforms.Compose([
+                                Transforms.RandomResizedCrop(size_crops[i], scale=(0.32,1), interpolation=Transforms.InterpolationMode.BICUBIC),
+                                flip_and_color_jitter,
+                                GaussianBlur(p=0.1),
+                                Solarization(p=0.2),
+                                Transforms.ToTensor(),
+                                Transforms.Normalize(mean=mean, std=std),
+                            ])
+                        ] * nmb_crops[i])      
+
+                    else: # all locals
+                        trans.extend([
+                            Transforms.Compose([
+                                Transforms.RandomResizedCrop(size_crops[i], scale=(0.05,0.32), interpolation=Transforms.InterpolationMode.BICUBIC),
+                                flip_and_color_jitter,
+                                GaussianBlur(),
+                                Transforms.ToTensor(),
+                                Transforms.Normalize(mean=mean, std=std),
+                                PadToSize(out_size[0], out_size[1])])]* nmb_crops[i])              
+        self.trans = trans
+
+    def __getitem__(self, index):
+        dataset_idx = index // self.num_transforms
+        transform_idx = index % self.num_transforms
+        img, label = self.dataset[dataset_idx]
+        transformed_img = self.trans[transform_idx](img)
+        
+        if self.return_index: return transformed_img, label, dataset_idx
+        return transformed_img, label
+    
+    def __len__(self):
+        return len(self.dataset) * self.num_transforms
+
+class BarlowDataset(Dataset):
+    def __init__(self, dataset, total_views=4):
+        self.dataset = dataset
+        self.total_views = total_views
+        
+        self.global_transforms = Transforms.Compose([
+            RandomApply(Transforms.ColorJitter(0.8, 0.8, 0.8, 0.2), p=0.3),
+            Transforms.RandomGrayscale(p=0.2),            
+            Transforms.RandomHorizontalFlip(p=0.5),
+            RandomApply(Transforms.GaussianBlur((3, 3), (1.0, 2.0)),p = 0.2),
+            Transforms.RandomResizedCrop(224, scale=(0.08, 1), interpolation=Transforms.InterpolationMode.BICUBIC),
+            Transforms.ToTensor(),
+            Transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.255])
+        ])
+        self.total_length = len(self.dataset) * self.total_views
+    
+    def __getitem__(self, idx):
+        dataset_idx = idx // (self.total_views)
+        sample, label = self.dataset[dataset_idx]
+        sample = self.global_transforms(sample)
+        return sample, label
+    
+    def __len__(self):
+        return self.total_length
+        
+"""
+Manual Augs
+"""
+
+class ScaleJitter(object):
     """
     Perform Large Scale Jitter on the input according to 'Simple Copy-Paste is a Strong Data 
     Augmentation Method for Instance Segmentation' (https://arxiv.org/abs/2012.07177).
@@ -119,29 +333,6 @@ class ScaleJitter(object): #NEED TO REVIEW
 
         return F.pad(img, (pad_left, pad_right, pad_top, pad_bottom), value=0)
 
-class PILRandomGaussianBlur(object):
-    """
-    Apply Gaussian Blur to the PIL image. Take the radius and probability of
-    application as the parameter.
-    This transform was used in SimCLR - https://arxiv.org/abs/2002.05709
-    """
-
-    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.):
-        self.prob = p
-        self.radius_min = radius_min
-        self.radius_max = radius_max
-
-    def __call__(self, img):
-        do_it = np.random.rand() <= self.prob
-        if not do_it:
-            return img
-
-        return img.filter(
-            ImageFilter.GaussianBlur(
-                radius=random.uniform(self.radius_min, self.radius_max)
-            )
-        )
-    
 class Cutout(object):
     """
     From: https://arxiv.org/abs/1708.04552
@@ -216,24 +407,6 @@ def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0):
     loss_entropy = -(1 - lam_adjusted) / num_classes * torch.sum(log_probs, dim=1)
     tempered_loss = loss_confidence.mean() + zeta * loss_entropy.mean()
     return tempered_loss
-
-def rand_bbox(size, lam): #based on https://github.com/clovaai/CutMix-PyTorch/blob/master/train.py
-    W = size[2]
-    H = size[3]
-    cut_rat = np.sqrt(1. - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
-
-    # uniform
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
-
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
-    return bbx1, bby1, bbx2, bby2
     
 
 def get_transformations(mean, std, aug_array, img_dims = 224, verbose=None):
@@ -276,5 +449,5 @@ def get_transformations(mean, std, aug_array, img_dims = 224, verbose=None):
     if aug_array[11]: transformations.append(Cutout(n_holes=1, length=8))
     
     ret = Transforms.Compose(transformations)
-    if verbose: print(f'{verbose} Augmentations: {ret}\nCutmix β: {cutmix_b}\nMixup α: {mixup_a}\n')
+    if verbose: print(f'{verbose} Manual Augmentations: {ret}\nCutmix β: {cutmix_b}\nMixup α: {mixup_a}\n')
     return ret, cutmix_b, mixup_a

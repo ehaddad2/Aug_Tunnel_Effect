@@ -28,7 +28,8 @@ def parse_args():
     parser.add_argument("--backbone_dataset_name", type=str, required=True, help="Name of the dataset.")
     parser.add_argument("--backbone_architecture", type=str, required=True, help="Model architecture.")
     parser.add_argument("--backbone_pth", type=str, required=True, help="Path to the backbone model.")
-    parser.add_argument("--backbone_aug_setting", nargs="+", required=True, help="Augmentation setting number.")
+    parser.add_argument("--backbone_manual_aug_setting", nargs="+", required=True, help="Backbone manual aug binary array.")
+    parser.add_argument("--backbone_aug_policy_setting", nargs="+", required=True, help="Backbone aug policy binary array.")
     parser.add_argument("--backbone_batch_size", type=int, default=512, help="Batch size for training.")
     parser.add_argument("--backbone_lr", type=float, default=0.01, help="Learning rate for optimizer.")
     parser.add_argument("--backbone_label_smoothing", type=float, default=0.1, help="Label smoothing for targets.")
@@ -65,7 +66,7 @@ def main():
     args = parse_args()
     
     title = (
-    f"backbone_{args.backbone_architecture}+{args.backbone_dataset_name}+aug{args.backbone_aug_setting}"
+    f"backbone_{args.backbone_architecture}+{args.backbone_dataset_name}+man_aug{args.backbone_man_aug_setting}+policy_aug{args.backbone_aug_policy_setting}"
     f"+probe_{args.probe_architecture}")
     results = []
     if args.use_wandb:
@@ -84,7 +85,8 @@ def main():
             num_workers=(args.loader_workers+len(args.backbone_cuda_devices)-1)//len(args.backbone_cuda_devices),
             architecture=args.backbone_architecture,
             backbone_pth=args.backbone_pth,
-            aug_setting=args.backbone_aug_setting,
+            man_aug_setting=args.backbone_man_aug_setting,
+            policy_aug_setting=args.backbone_aug_policy_setting,
             img_dims=args.img_dims,
             lr=args.backbone_lr,
             label_smoothing=args.backbone_label_smoothing,
@@ -148,7 +150,7 @@ def main():
     datasets = get_all_dataset_names(PROBE_DATASET_BASE_PATH) if str.lower(args.probe_datasets[0]) == 'all' else args.probe_datasets
     for i in range(len(datasets)):
         
-        full_probe_pth = args.probe_pth + "/" + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "aug:" + str(args.backbone_aug_setting) + "/" +  datasets[i] + "/" + str(args.probe_architecture)
+        full_probe_pth = args.probe_pth + "/" + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(args.backbone_man_aug_setting)  + " aug_policy:" + str(args.backbone_aug_policy_setting) + "/" +  datasets[i] + "/" + str(args.probe_architecture)
         print(f'\nProbing dataset: {datasets[i]}')
         trainer = LinearProbeTrainer(
             dataset_name=datasets[i],
@@ -168,7 +170,7 @@ def main():
             use_wandb=args.use_wandb,
             device=device,
             seed=SEED)
-        probe_res = trainer.train_probe(args.backbone_aug_setting)
+        probe_res = trainer.train_probe(args.backbone_man_aug_setting)
 
         if args.use_wandb:
             accuracy_data = [
@@ -210,7 +212,8 @@ def main():
             results.append([
                 i+1,
                 args.backbone_architecture,
-                str(args.backbone_aug_setting),
+                str(args.backbone_man_aug_setting),
+                str(args.backbone_aug_policy_setting),
                 args.backbone_dataset_name,
                 datasets[i],
                 backbone_acc,
@@ -220,7 +223,8 @@ def main():
             df = pd.DataFrame(results, columns=[
                 "Test_Num",
                 "Backbone Architecture",
-                "Augmentation Setting",
+                "Manual Augmentation Setting",
+                "Augmentation Policy Setting",
                 "ID Dataset",
                 "OOD Dataset",
                 "Backbone ID max top-1 test acc",
