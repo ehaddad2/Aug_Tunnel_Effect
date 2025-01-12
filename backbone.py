@@ -23,8 +23,6 @@ import Models
 SEED = 30
 BATCH_SIZE = 512
 EPOCHS = 100
-DATASET_BASE_PATH = "./data/ID/"
-MODEL_ARCHITECTURE = 'resnet18'
 
 #seeding:
 torch.manual_seed(SEED)
@@ -40,8 +38,9 @@ def ddp_setup(rank, world_size):
     torch.cuda.set_device(rank)
 
 class BackboneTrainer:
-    def __init__(self, dataset_name, num_workers, architecture, backbone_pth, man_aug_setting, policy_aug_setting, img_dims, lr, label_smoothing, epochs, cuda_devices, device, seed, wandb, use_wandb, warmup_epochs=5, use_cos_annealing=True):
-        self.dataset = dataset_name
+    def __init__(self, dataset_base_pth, dataset_name, num_workers, architecture, backbone_pth, man_aug_setting, policy_aug_setting, img_dims, lr, label_smoothing, epochs, cuda_devices, device, seed, wandb, use_wandb, warmup_epochs=5, use_cos_annealing=True):
+        self.dataset_base_pth = dataset_base_pth
+        self.dataset_name = dataset_name
         self.num_workers = num_workers
         self.architecture = architecture
         self.device = device
@@ -63,9 +62,9 @@ class BackboneTrainer:
         test_T,_,_ = ManualAugs.get_transformations(mean, std, aug_array=[0]*14, img_dims=self.img_dims, verbose="Backbone Test") # manual augs
         if not sum(self.policy_aug_setting):
             train_T,self.cutmix_b,self.mixup_a = ManualAugs.get_transformations(mean, std, aug_array=man_aug_setting, img_dims=self.img_dims, verbose="Backbone Train")
-            self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, train_T, test_T, seed)
+            self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, self.dataset_base_pth, train_T, test_T, seed)
         else:
-            self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, T.Compose([]), test_T, seed)
+            self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, self.dataset_base_pth, T.Compose([]), test_T, seed)
             polices = []
             if self.policy_aug_setting[0]:
                 polices.append('swav')

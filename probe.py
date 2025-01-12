@@ -17,14 +17,13 @@ from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 import collections
 import argparse
-from Utils import TrainModel, CustomDatasets, AugDatasets, ManualAugs
+from Utils import TrainModel, CustomDatasets, ManualAugs
 import Models
 
 #CONSTANTS
 SEED = 30
 BATCH_SIZE = 128
 EPOCHS = 30
-DATASET_BASE_PATH = "/home/elias/Deep-Learning/Research/OOD/data/OOD/"
 BACKBONE_OUT = 100
 PROBE_LAYER = 'layer4'
 PROBE_IN = 512
@@ -37,9 +36,10 @@ np.random.seed(SEED)
 torch.backends.cudnn.benchmark = False
 
 class LinearProbeTrainer:
-    def __init__(self, dataset_name, num_workers, backbone_pth, probe_pth, backbone_arch, probe_arch, img_dims, probe_layer, batch_size, lr, label_smoothing, epochs, cuda_devices, device, seed, wandb, use_wandb):
-        self.device = device
+    def __init__(self, dataset_base_pth, dataset_name, num_workers, backbone_pth, probe_pth, backbone_arch, probe_arch, img_dims, probe_layer, batch_size, lr, label_smoothing, epochs, cuda_devices, device, seed, wandb, use_wandb):
+        self.dataset_base_pth = dataset_base_pth
         self.dataset_name = dataset_name
+        self.device = device
         self.num_workers=num_workers
         self.backbone_pth = Path(backbone_pth)
         self.backbone_arch = backbone_arch
@@ -54,10 +54,10 @@ class LinearProbeTrainer:
         self.wandb = wandb
         self.use_wandb = use_wandb
         SEED = seed
-        mean, std = AugDatasets.ManualAugs.get_mean_std(self.dataset_name)
+        mean, std = ManualAugs.get_mean_std(self.dataset_name)
         train_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Train')
         test_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Test')
-        train, test, num_classes = CustomDatasets.load_dataset(dataset_name, DATASET_BASE_PATH, train_T, test_T, seed)
+        train, test, num_classes = CustomDatasets.load_dataset(dataset_name, self.dataset_base_pth, train_T, test_T, seed)
         self.model = self.initialize_probe_model(num_classes)
         self.train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=self.num_workers)
         self.test_loader = DataLoader(test, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)

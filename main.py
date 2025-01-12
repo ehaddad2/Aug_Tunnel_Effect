@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 import analysis
 import torch.multiprocessing as mp
-PROBE_DATASET_BASE_PATH = "./data/OOD/"
-BACKBONE_DATASET_BASE_PATH = "./data/ID/"
 SEED = 30
 
 class LoadFromJSON(argparse.Action):
@@ -25,6 +23,7 @@ def parse_args():
     args = parser.parse_args()
 
     # Backbone arguments
+    parser.add_argument("--backbone_dataset_base_pth", type=str, required=False, default="./data/ID/", help="Base to backbone data")
     parser.add_argument("--backbone_dataset_name", type=str, required=True, help="Name of the dataset.")
     parser.add_argument("--backbone_architecture", type=str, required=True, help="Model architecture.")
     parser.add_argument("--backbone_pth", type=str, required=True, help="Path to the backbone model.")
@@ -35,12 +34,14 @@ def parse_args():
     parser.add_argument("--backbone_label_smoothing", type=float, default=0.1, help="Label smoothing for targets.")
     parser.add_argument("--backbone_epochs", type=int, default=512, help="Number of training epochs.")
     parser.add_argument("--backbone_cuda_devices", nargs="+", type=int, default=[0,1], help="CUDA device IDs to use.")
+    parser.add_argument("--backbone_t1Max", type=int, default=1, help="Top-1 max test acc for continuing from checkpoint")
 
     # Probe arguments
+    parser.add_argument("--probe_datasets_base_pth", type=str, required=False, default="./data/OOD/", help="Base path to probe data")
+    parser.add_argument("--probe_datasets", nargs="+", default=["all"], help="List of OOD datasets to probe, or 'all' for all.")
     parser.add_argument("--probe_pth", type=str, required=True, help="Base path to save the trained linear probe.")
     parser.add_argument("--probe_architecture", type=str, required=True, help="Probing architecture.")
     parser.add_argument("--probe_layer", type=str, required=True, help="Layer to probe on.")
-    parser.add_argument("--probe_datasets", nargs="+", default=["all"], help="List of OOD datasets to probe, or 'all' for all.")
     parser.add_argument("--probe_batch_size", type=int, default=64, help="Batch size for training.")
     parser.add_argument("--probe_lr", type=float, default=0.01, help="Learning rate for optimizer.")
     parser.add_argument("--probe_label_smoothing", type=float, default=0.1, help="Label smoothing for targets.")
@@ -74,13 +75,14 @@ def main():
             project="Aug & Tunnel Effect",
             group=args.run_group,
             name=title,
-            config=vars(args),
+            config=vars(args)
         )
     
     # Backbone training
     backbone_results = None
     if not Path.exists(Path(args.backbone_pth)):
         trainer = BackboneTrainer(
+            dataset_base_pth=args.backbone_dataset_base_pth,
             dataset_name=args.backbone_dataset_name,
             num_workers=(args.loader_workers+len(args.backbone_cuda_devices)-1)//len(args.backbone_cuda_devices),
             architecture=args.backbone_architecture,
@@ -144,15 +146,18 @@ def main():
             })
         backbone_acc = backbone_results['max_test_acc']
 
-    else: backbone_acc = float(input("\nInput top1 max backbone test acc: "))
+    else: 
+        print(f"Backbone {args.backbone_pth} found, probing with this.")
+        backbone_acc = args.backbone_t1Max
 
     # Linear probe training
-    datasets = get_all_dataset_names(PROBE_DATASET_BASE_PATH) if str.lower(args.probe_datasets[0]) == 'all' else args.probe_datasets
+    datasets = get_all_dataset_names(args.probe_datasets_base_pth) if str.lower(args.probe_datasets[0]) == 'all' else args.probe_datasets
     for i in range(len(datasets)):
         
         full_probe_pth = args.probe_pth + "/" + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(args.backbone_man_aug_setting)  + " aug_policy:" + str(args.backbone_aug_policy_setting) + "/" +  datasets[i] + "/" + str(args.probe_architecture)
         print(f'\nProbing dataset: {datasets[i]}')
         trainer = LinearProbeTrainer(
+            dataset_base_pth=args.probe_datasets_base_pth,
             dataset_name=datasets[i],
             num_workers=(args.loader_workers+len(args.backbone_cuda_devices)-1)//len(args.backbone_cuda_devices),
             backbone_pth=args.backbone_pth,
