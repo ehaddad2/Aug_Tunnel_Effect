@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch.distributed as dist
-from Utils import ManualAugs
+from Utils import Augmentations
 import numpy as np
 SEED = 30
 def dist_training():
@@ -47,29 +47,26 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
     for batch_idx, (X, y) in enumerate(dataloader):
         X, y = X.to(device), y.to(device)
         
-        """
+        
         if cutmix_beta > 0: #perform cutmix
-            X_cm, y_m, lam = ManualAugs.cutmix_data(X, y, cutmix_beta)
+            X_cm, y_m, lam = Augmentations.cutmix_data(X, y, cutmix_beta)
             outputs = model(X_cm)
-            loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
+            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
 
         elif mixup_alpha > 0: #perform mixup
-            X_m, _, y_m, lam = ManualAugs.mixup_data(X, y, mixup_alpha)
+            X_m, _, y_m, lam = Augmentations.mixup_data(X, y, mixup_alpha)
             outputs = model(X_m)
-            loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
+            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
 
         elif (mixup_alpha > 0) and (cutmix_beta > 0): #perform both
-            X_m, _, y_m, lam = ManualAugs.mixup_data(X, y, mixup_alpha)
-            X_cm, y_m, lam = ManualAugs.cutmix_data(X_m, y_m, cutmix_beta)
+            X_m, _, y_m, lam = Augmentations.mixup_data(X, y, mixup_alpha)
+            X_cm, y_m, lam = Augmentations.cutmix_data(X_m, y_m, cutmix_beta)
             outputs = model(X_cm)
-            loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
+            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
 
         else: #no reg
             outputs = model(X)
-            loss = loss_fn(outputs, y)
-        """
-
-        outputs = model(X)
+            
         loss = loss_fn(outputs, y)
         predicted = outputs.argmax(dim=1)
         

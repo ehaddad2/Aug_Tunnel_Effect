@@ -17,7 +17,7 @@ from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 import collections
 import argparse
-from Utils import TrainModel, CustomDatasets, ManualAugs
+from Utils import TrainModel, CustomDatasets, Augmentations
 import Models
 
 #CONSTANTS
@@ -54,9 +54,9 @@ class LinearProbeTrainer:
         self.wandb = wandb
         self.use_wandb = use_wandb
         SEED = seed
-        mean, std = ManualAugs.get_mean_std(self.dataset_name)
-        train_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Train')
-        test_T,_,_ = ManualAugs.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Test')
+        mean, std = Augmentations.get_mean_std(self.dataset_name)
+        train_T,_,_ = Augmentations.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Train')
+        test_T,_,_ = Augmentations.get_transformations(mean, std, [0]*14, img_dims=self.img_dims, verbose=f'{self.dataset_name} Probe Test')
         train, test, num_classes = CustomDatasets.load_dataset(dataset_name, self.dataset_base_pth, train_T, test_T, seed)
         self.model = self.initialize_probe_model(num_classes)
         self.train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=self.num_workers)
@@ -89,18 +89,4 @@ class LinearProbeTrainer:
         Path(self.probe_pth).parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.model.state_dict(), self.probe_pth)
 
-        """
-        
-        if self.use_wandb: #save to wandb
-
-            sample_batch = next(iter(self.test_loader))[0].to(self.device)
-            sample_in = sample_batch[:1]
-            onnx_model = torch.onnx.export(
-                self.model,
-                sample_in,
-                "myModel.onnx",
-                input_names=["input"]
-            )
-            self.wandb.save(onnx_model)
-        """
         return train_res

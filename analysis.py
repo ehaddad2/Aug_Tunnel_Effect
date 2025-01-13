@@ -1,5 +1,6 @@
 """
 Contains code for extracting model embeddings and performing analysis/visualization
+-- still being developed --
 """
 from pathlib import Path
 import torch
@@ -18,7 +19,7 @@ import matplotlib.pyplot as plt
 import argparse
 import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
-from Utils import ManualAugs
+from Utils import Augmentations
 
 SEED = 30
 EMBEDDING_PATH_STR = "/home/elias/Deep Learning/Research/OOD/models/IN-100_Test1/embeddings/res18_0.pth"
@@ -33,7 +34,7 @@ def parse_args():
 
 def visualize_dataset(dataset, dataset_name, n_samples=5, filename="sampled_images.jpg"):
     fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
-    mean,std = ManualAugs.get_mean_std(dataset_name)
+    mean,std = Augmentations.get_mean_std(dataset_name)
     mean,std = torch.tensor(mean).view(3, 1, 1), torch.tensor(std).view(3, 1, 1)
 
     for i in range(n_samples):

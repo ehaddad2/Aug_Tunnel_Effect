@@ -10,7 +10,7 @@ import torchvision
 import torchaudio
 import torchaudio.transforms as transforms
 import librosa
-from Utils import ManualAugs
+from Utils import Augmentations
 from PIL import Image
 
 
@@ -186,7 +186,7 @@ def load_dataset(dataset_name:str, base_pth, train_T, test_T, seed): #loads in a
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = len(dataset.classes)
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = ManualAugs.custom(dataset=train, transforms=train_T), ManualAugs.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
     elif dataset_name == 'oxford-pets':
         train,test = datasets.OxfordIIITPet(root=base_pth+'oxford-pets', split='trainval', transform=train_T, download=True), Cub2011(root=base_pth+'oxford-pets', split='train', transform=train_T, download=True)
         num_classes = 200
@@ -196,7 +196,7 @@ def load_dataset(dataset_name:str, base_pth, train_T, test_T, seed): #loads in a
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = 7
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = ManualAugs.custom(dataset=train, transforms=train_T), ManualAugs.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
     elif dataset_name == 'esc-50':
         mel_transform = transforms.MelSpectrogram(sample_rate=44100, n_fft=2205,hop_length=441)
         ds_pth = base_pth+dataset_name
@@ -204,13 +204,13 @@ def load_dataset(dataset_name:str, base_pth, train_T, test_T, seed): #loads in a
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = 50
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = ManualAugs.custom(dataset=train, transforms=train_T), ManualAugs.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
     else: 
         dataset = torchvision.datasets.ImageFolder(base_pth+dataset_name)
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = len(dataset.classes)
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = ManualAugs.custom(dataset=train, transforms=train_T), ManualAugs.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
 
     print('\ntrain length: ', len(train), 'test length: ', len(test), '\n')
     return train,test,num_classes

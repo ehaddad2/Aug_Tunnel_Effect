@@ -17,7 +17,7 @@ import psutil
 from torch.multiprocessing import Queue
 from torchvision import transforms as T
 
-from Utils import TrainModel, CustomDatasets, ManualAugs
+from Utils import TrainModel, CustomDatasets, Augmentations
 import Models
 
 SEED = 30
@@ -58,25 +58,25 @@ class BackboneTrainer:
         self.use_wandb = use_wandb
         SEED = seed
 
-        mean, std = ManualAugs.get_mean_std(dataset_name)
-        test_T,_,_ = ManualAugs.get_transformations(mean, std, aug_array=[0]*14, img_dims=self.img_dims, verbose="Backbone Test") # manual augs
+        mean, std = Augmentations.get_mean_std(dataset_name)
+        test_T,_,_ = Augmentations.get_transformations(mean, std, aug_array=[0]*14, img_dims=self.img_dims, verbose="Backbone Test") # manual augs
         if not sum(self.policy_aug_setting):
-            train_T,self.cutmix_b,self.mixup_a = ManualAugs.get_transformations(mean, std, aug_array=man_aug_setting, img_dims=self.img_dims, verbose="Backbone Train")
+            train_T,self.cutmix_b,self.mixup_a = Augmentations.get_transformations(mean, std, aug_array=man_aug_setting, img_dims=self.img_dims, verbose="Backbone Train")
             self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, self.dataset_base_pth, train_T, test_T, seed)
         else:
             self.train, self.test, self.num_classes = CustomDatasets.load_dataset(dataset_name, self.dataset_base_pth, T.Compose([]), test_T, seed)
             polices = []
             if self.policy_aug_setting[0]:
                 polices.append('swav')
-                self.train = ManualAugs.MultiCropDataset(self.train, [224,96], [2,6], polices=polices)
+                self.train = Augmentations.MultiCropDataset(self.train, [224,96], [2,6], polices=polices)
             
             if self.policy_aug_setting[1]:
                 polices.append('barlow')
-                self.train = ManualAugs.MultiCropDataset(self.train, [224,224], [1,1], polices=polices)
+                self.train = Augmentations.MultiCropDataset(self.train, [224,224], [1,1], polices=polices)
             
             if self.policy_aug_setting[2]:
                 polices.append('dino')
-                self.train = ManualAugs.MultiCropDataset(self.train, [224,224,96], [1,1,6], polices=polices)
+                self.train = Augmentations.MultiCropDataset(self.train, [224,224,96], [1,1,6], polices=polices)
        
         models = Models.Models(device)
         self.model = models.get_model(self.architecture, num_classes=self.num_classes)
