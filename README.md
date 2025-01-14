@@ -53,6 +53,22 @@ in development
 4. Build GB SHAP model, collect all ID/OOD results, and run through it => `not done`
 5. Peform analysis based on trained SHAP, if more analysis is needed, use 224 x 224 for those experiments. => `not done`
 
+## Dataset Details
+
+1. ID Datasets
+
+    1. ImageNet100
+
+2. OOD Datasets
+
+    1. CIFAR10
+    2. CUB200
+    3. esc-50
+    4. STL10
+    5. Flowers102
+    6. Aircrafts
+    7. HAM10000
+    8. NINCO
 
 ## Augmentation Details
 
@@ -96,11 +112,11 @@ The following are mappings from the indices of the aug combos and aug polices in
 [0,0,0,0,0,0,0,0,0,0,0,0,0,0]\=> `done`\
 [1,0,0,0,0,0,0,0,0,0,0,0,0,0]\=> `done`\
 [0,1,0,0,0,0,0,0,0,0,0,0,0,0]\=> `done`\
-[0,0,1,0,0,0,0,0,0,0,0,0,0,0]\
-[0,0,0,1,0,0,0,0,0,0,0,0,0,0]\
-[0,0,0,0,1,0,0,0,0,0,0,0,0,0]\
-[0,0,0,0,0,1,0,0,0,0,0,0,0,0]\
-[0,0,0,0,0,0,1,0,0,0,0,0,0,0]\
+[0,0,1,0,0,0,0,0,0,0,0,0,0,0]\=> `done`\
+[0,0,0,1,0,0,0,0,0,0,0,0,0,0]\=> `done`\
+[0,0,0,0,1,0,0,0,0,0,0,0,0,0]\=> `done`\
+[0,0,0,0,0,1,0,0,0,0,0,0,0,0]\=> `done`\
+[0,0,0,0,0,0,1,0,0,0,0,0,0,0]\=> `done`\
 [0,0,0,0,0,0,0,1,0,0,0,0,0,0]\
 [0,0,0,0,0,0,0,0,1,0,0,0,0,0]\
 [0,0,0,0,0,0,0,0,0,1,0,0,0,0]\

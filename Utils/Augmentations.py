@@ -152,7 +152,7 @@ def color_distortion(brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2): #ba
     color_jitter = Transforms.ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
     rnd_color_jitter = RandomApply(color_jitter, p=0.8)
     rnd_gray = Transforms.RandomGrayscale(p=0.2)
-    return Transforms.Compose([rnd_color_jitter, rnd_gray])
+    return [rnd_color_jitter, rnd_gray]
 
 """
 Aug Polices
