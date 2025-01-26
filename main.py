@@ -1,5 +1,7 @@
+import torch_xla.runtime
 import wandb
 import argparse
+import backbone
 from backbone import BackboneTrainer
 from probe import LinearProbeTrainer
 import torch
@@ -9,6 +11,13 @@ import json
 from pathlib import Path
 import analysis
 import torch.multiprocessing as mp
+import torch_xla.core.xla_model as xm
+import torch_xla.distributed.xla_multiprocessing as xmp
+import torch_xla.core.xla_env_vars as xenv
+import torch_xla.runtime as xr
+import torch_xla.distributed.xla_backend
+import logging
+from torch.multiprocessing import Queue
 SEED = 30
 
 class LoadFromJSON(argparse.Action):
@@ -52,6 +61,7 @@ def parse_args():
     parser.add_argument("--use_wandb", type=bool, default=False, help="Enable Weights & Biases logging.")
     parser.add_argument("--run_group", type=str, default="Untitled Run Group", help="Weights & Biases experiment run log group")
     parser.add_argument("--use_ddp", type=bool, default=False, help="Train model on multiple GPUs")
+    parser.add_argument("--use_tpu", type=bool, default=False, help="Set to true if training on TPUs")
     parser.add_argument("--img_dims", type=int, default=False, help="Cropping dim for images")
     parser.add_argument("--loader_workers", type=int, default=0, help="Number of worker processes for each dataloader")
     parser.add_argument("--dataset_img_pth", type=str, help="Path for sampled backbone dataset images")
@@ -61,10 +71,18 @@ def get_all_dataset_names(base_pth):
     if not os.path.isdir(base_pth): raise NotADirectoryError(f"{base_pth} is not a directory.")
     return [filename for filename in os.listdir(base_pth)]
 
-def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f'\nDevice being used: ', device, '\n')
+def get_device(using_tpu):
+    if torch.cuda.is_available(): return torch.device('cuda')
+    elif using_tpu: return torch.device('xla')
+    else: return torch.device('cpu')
+
+
+if __name__ == '__main__':
     args = parse_args()
+
+    if not args.use_tpu: mp.set_start_method('spawn', force=True)
+    device = get_device(args.use_tpu)
+    print(f'\nDevice being used: ', device, '\n')
     
     title = (
     f"backbone_{args.backbone_architecture}+{args.backbone_dataset_name}+man_aug{args.backbone_man_aug_setting}+policy_aug{args.backbone_aug_policy_setting}"
@@ -77,7 +95,7 @@ def main():
             name=title,
             config=vars(args)
         )
-    
+    xenv.TPU_NUM_DEVICES = 4
     # Backbone training
     backbone_results = None
     if not Path.exists(Path(args.backbone_pth)):
@@ -94,32 +112,60 @@ def main():
             label_smoothing=args.backbone_label_smoothing,
             epochs=args.backbone_epochs,
             cuda_devices=args.backbone_cuda_devices,
+            use_tpu=args.use_tpu,
             wandb=wandb,
             use_wandb=args.use_wandb,
             device=device,
             seed=SEED)
         
         analysis.visualize_dataset(trainer.train, args.backbone_dataset_name, filename=args.dataset_img_pth)
-        if args.use_ddp:
+        print(f'training on tpu...')
+        result_queue = Queue()
+        wrapped_model = xmp.MpModelWrapper(trainer.model)
+        xmp.spawn(
+            backbone.tpu_worker,
+            args=(trainer.num_workers, wrapped_model, trainer.train, trainer.test, args.backbone_batch_size, 
+                trainer.epochs, trainer.warmup_epochs, trainer.use_cos_annealing, 
+                trainer.label_smoothing, trainer.lr, trainer.backbone_pth, result_queue),
+            nprocs=4,
+            start_method='fork'
+        )
+
+        backbone_results = result_queue.get()
+        """
+        if device.type == 'cpu':
+            backbone_results = trainer.cpu_train(batch_size=args.backbone_batch_size)
+        elif device.type == 'gpu':
             world_size=len(args.backbone_cuda_devices)
-            backbone_results = trainer.main_ddp(world_size, args.backbone_batch_size//world_size)
-        else:
-            backbone_results = trainer.train_backbone_serial()
+            backbone_results = trainer.ddp_train(world_size=len(args.backbone_cuda_devices), batch_size=args.backbone_batch_size//world_size)
+        elif device.type == 'xla':
+            print(f'training on tpu...')
+            result_queue = Queue()
+            wrapped_model = xmp.MpModelWrapper(trainer.model)
+            xmp.spawn(
+                backbone.tpu_worker,
+                args=(len(trainer.cuda_devices), trainer.num_workers, wrapped_model, trainer.train, trainer.test, args.backbone_batch_size, 
+                    trainer.epochs, trainer.warmup_epochs, trainer.use_cos_annealing, 
+                    trainer.label_smoothing, trainer.lr, trainer.backbone_pth, result_queue),
+                nprocs=2,
+                start_method='fork'
+            )
+            backbone_results = result_queue.get()
+
+"""
+
+
         
         if args.use_wandb and backbone_results:
             # Prepare data for charts
             backbone_accuracy_data = [
                 [epoch + 1, value, series]
-                for epoch, (train_acc, test_acc) in enumerate(
-                    zip(backbone_results['train_acc'], backbone_results['test_acc'])
-                )
+                for epoch, (train_acc, test_acc) in enumerate(zip(backbone_results['train_acc'], backbone_results['test_acc']))
                 for value, series in zip([train_acc, test_acc], ["Backbone Train Accuracy", "Backbone Test Accuracy"])
             ]
             backbone_loss_data = [
                 [epoch + 1, value, series]
-                for epoch, (train_loss, test_loss) in enumerate(
-                    zip(backbone_results['train_loss'], backbone_results['test_loss'])
-                )
+                for epoch, (train_loss, test_loss) in enumerate(zip(backbone_results['train_loss'], backbone_results['test_loss']))
                 for value, series in zip([train_loss, test_loss], ["Backbone Train Loss", "Backbone Test Loss"])
             ]
 
@@ -239,8 +285,3 @@ def main():
     print(f'\nProbed all datasets.')
 
     # Analysis
-
-if __name__ == '__main__':
-    if not torch.distributed.is_initialized():
-        torch.multiprocessing.set_start_method('spawn', force=True)
-    main()

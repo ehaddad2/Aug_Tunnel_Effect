@@ -11,7 +11,7 @@ class Models:
             "resnet18": self.resnet18,
             'lp1': self.lp1,
         }
-        self.device = device
+        if device.type != 'xla': self.device = device
     def __del__(self):
         torch.cuda.empty_cache()
         
