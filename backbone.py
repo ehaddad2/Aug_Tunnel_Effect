@@ -1,7 +1,5 @@
 import os
-import sys
 import time
-import datetime
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -11,9 +9,7 @@ import random
 import numpy as np
 import torch.nn as nn
 from pathlib import Path
-import tqdm
 import time
-import psutil
 from torch.multiprocessing import Queue
 from torchvision import transforms as T
 
