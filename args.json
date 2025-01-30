@@ -26,6 +26,6 @@
     "use_wandb": false,
     "run_group": "Maple Run: 3",
     "img_dims": 224,
-    "loader_workers": 20,
+    "loader_workers": 16,
     "dataset_img_pth": "figures/sampled_images.jpg"
 }

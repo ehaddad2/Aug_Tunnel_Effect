@@ -5,13 +5,12 @@ import torchvision
 import collections
 
 class Models:
-    def __init__(self, device):
+    def __init__(self):
         self.model_architectures = {
             "resnet10": self.resnet10,
             "resnet18": self.resnet18,
             'lp1': self.lp1,
         }
-        if device.type != 'xla': self.device = device
     def __del__(self):
         torch.cuda.empty_cache()
         

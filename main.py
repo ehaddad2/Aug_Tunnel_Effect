@@ -95,7 +95,6 @@ if __name__ == '__main__':
             name=title,
             config=vars(args)
         )
-    xenv.TPU_NUM_DEVICES = 4
     # Backbone training
     backbone_results = None
     if not Path.exists(Path(args.backbone_pth)):
@@ -119,19 +118,25 @@ if __name__ == '__main__':
             seed=SEED)
         
         analysis.visualize_dataset(trainer.train, args.backbone_dataset_name, filename=args.dataset_img_pth)
-        print(f'training on tpu...')
-        result_queue = Queue()
-        wrapped_model = xmp.MpModelWrapper(trainer.model)
-        xmp.spawn(
-            backbone.tpu_worker,
-            args=(trainer.num_workers, wrapped_model, trainer.train, trainer.test, args.backbone_batch_size, 
-                trainer.epochs, trainer.warmup_epochs, trainer.use_cos_annealing, 
-                trainer.label_smoothing, trainer.lr, trainer.backbone_pth, result_queue),
-            nprocs=4,
-            start_method='fork'
-        )
+        #result_queue = Queue()
+        torch_xla.launch(backbone.tpu_train, args=(
+            args.loader_workers,
+            args.backbone_dataset_base_pth,
+            args.backbone_dataset_name,
+            args.backbone_architecture,
+            args.backbone_pth, 
+            args.backbone_man_aug_setting,
+            args.backbone_aug_policy_setting,
+            args.img_dims,
+            args.backbone_lr,
+            args.backbone_label_smoothing,
+            args.backbone_epochs,
+            args.backbone_batch_size
+            ))
 
-        backbone_results = result_queue.get()
+        print("DONE!!")
+        exit()
+        #backbone_results = result_queue.get()
         """
         if device.type == 'cpu':
             backbone_results = trainer.cpu_train(batch_size=args.backbone_batch_size)
@@ -151,10 +156,7 @@ if __name__ == '__main__':
                 start_method='fork'
             )
             backbone_results = result_queue.get()
-
-"""
-
-
+        """
         
         if args.use_wandb and backbone_results:
             # Prepare data for charts
