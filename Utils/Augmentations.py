@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from typing import Tuple, Optional
 from PIL import Image, ImageFilter, ImageOps
+import math
 
 #seeding:
 SEED = 30
@@ -18,6 +19,29 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.backends.cudnn.benchmark = False
 
+#constants
+idx_to_man_aug = {
+        0: "Horizontal Flip",
+        1: "Resize Crop",
+        2: "Random Affine",
+        3: "Scale Jitter", 
+        4: "Gaussian Blur",
+        5: "Gaussian Noise",
+        6: "Color Jitter",
+        7: "Color Distortion", 
+        8: "Random Invert",
+        9: "Random Solarize",
+        10: "Random Autocontrast",
+        11: "CutOut",
+        12: "Tempered MixUp",
+        13: "CutMix"
+}
+
+idx_to_aug_policy = {
+        0: "SwAV (2 Global + 6 Local Views)",
+        1: "Barlow Twins (2 Global + 0 Local Views)", 
+        2: "DINO (2 Global + 6 Local Views)"
+}
 
 """
 Helper funcs/classes
@@ -126,7 +150,7 @@ def get_mean_std(dataset_name:str):
 
 def custom(dataset, transforms) -> Dataset:
     if not isinstance(transforms, Transforms.Compose): 
-        composed = Transforms.Compose(*transforms)
+        composed = Transforms.Compose(*transforms) if len(transforms)>0 else None
     else: composed = transforms
     return AugDataset(dataset, composed)
 
@@ -152,7 +176,7 @@ def color_distortion(brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2): #ba
     color_jitter = Transforms.ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
     rnd_color_jitter = RandomApply(color_jitter, p=0.8)
     rnd_gray = Transforms.RandomGrayscale(p=0.2)
-    return Transforms.Compose([rnd_color_jitter, rnd_gray])
+    return [rnd_color_jitter, rnd_gray]
 
 """
 Aug Polices
@@ -375,14 +399,14 @@ class Cutout(object):
 
         return img
     
-def mixup_data(x, y, alpha=1.0, n_classes=10, use_cuda=True): #from https://github.com/facebookresearch/mixup-cifar10/blob/main/train.py
+def mixup_data(x, y, alpha=1.0, n_classes=10): #from https://github.com/facebookresearch/mixup-cifar10/blob/main/train.py
     '''Returns mixed inputs, rand input idx's, pairs of targets, and lambda'''
     if alpha > 0: lam = np.random.beta(alpha, alpha)
     else: lam = 1
 
     batch_size = x.size()[0]
-    if use_cuda: index = torch.randperm(batch_size).cuda()
-    else: index = torch.randperm(batch_size)
+    index = torch.randperm(batch_size)
+
     mixed_x = lam * x + (1 - lam) * x[index, :]
 
     #temper https://arxiv.org/pdf/2009.04659 
@@ -409,7 +433,7 @@ def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0):
     return tempered_loss
     
 
-def get_transformations(mean, std, aug_array, img_dims = 224, verbose=None):
+def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None): 
     transformations,cutmix_b, mixup_a = [], 0, 0
 
     transformations.append(Transforms.Resize(256, interpolation=Transforms.InterpolationMode.BILINEAR))
@@ -417,37 +441,78 @@ def get_transformations(mean, std, aug_array, img_dims = 224, verbose=None):
     
     # 1) Geometric transforms (PIL)
     if aug_array[0]:
-        transformations.append(Transforms.RandomHorizontalFlip(p=0.5))
-    if aug_array[1]:
-        transformations.append(Transforms.RandomResizedCrop(size=img_dims))
+        transformations.append(Transforms.RandomHorizontalFlip(p=aug_array[0]))
+
+    if aug_array[1]: #TODO: scale and ratio fixed
+        max_w, max_h, strength = img_dims[0], img_dims[1], aug_array[1]
+        max_area = max_w*max_h
+        crop_dim = int(math.sqrt(max_area*(1-strength+0.0001)))
+        transformations.append(RandomApply(Transforms.RandomResizedCrop(size=crop_dim), p=aug_array[1]))
+
     if aug_array[2]:
-        transformations.append(Transforms.RandomAffine(degrees=(-15, 15), translate=(0.1, 0.1), scale=(0.8, 1.2), shear=10))
+        alpha = aug_array[2] #distribute weight evenly among param
+        deg_min,deg_max = alpha*(-180), alpha*180
+        scale_min, scale_max = 1-alpha+0.1, 1 + (254 * alpha)
+        print(scale_min, scale_max)
+        deg = alpha*90*random.choice([-1,1])
+        transformations.append(RandomApply(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(scale_min, scale_max), shear=deg), aug_array[2]))
 
     # 2) Color transforms (PIL)
     if aug_array[6]:
-        transformations.append(Transforms.ColorJitter(brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2))
+        alpha = aug_array[6]
+        transformations.append(RandomApply(Transforms.ColorJitter(brightness=alpha*2.23, contrast=alpha*2.23, saturation=alpha*2.23, hue=alpha*0.5), aug_array[6]))
     if aug_array[7]:
-        t = color_distortion()
+        alpha = aug_array[7]
+        t = color_distortion(brightness=alpha*2.23, contrast=alpha*2.23, saturation=alpha*2.23, hue=alpha*0.5)
         for aug in t:
             transformations.append(aug)
     if aug_array[8]:
-        transformations.append(Transforms.RandomInvert(p=0.5))
+        transformations.append(Transforms.RandomInvert(p=aug_array[8]))
     if aug_array[9]:
-        transformations.append(Transforms.RandomSolarize(threshold=128, p=0.5))
+        alpha = aug_array[9]
+        th = (1-alpha)*255
+        transformations.append(Transforms.RandomSolarize(threshold=th, p=alpha))
     if aug_array[10]:
-        transformations.append(Transforms.RandomAutocontrast(p=0.5))
+        transformations.append(Transforms.RandomAutocontrast(p=aug_array[10]))
     if aug_array[4]:
-        transformations.append(PILRandomGaussianBlur())
+        rad_min = 0
+        rad_max = 0 + aug_array[4]*(img_dims[0]/2)
+        transformations.append(PILRandomGaussianBlur(radius_min=rad_min, radius_max=rad_max, p=aug_array[4]))
 
     mixup_a = aug_array[12]
     cutmix_b = aug_array[13]
 
     transformations.append(Transforms.ToTensor())
-    if aug_array[3]: transformations.append(ScaleJitter(target_size=(img_dims, img_dims), scale_range=(0.1, 2.0), interpolation='bilinear'))
-    if aug_array[5]: transformations.append(RandomApply(GaussianNoise(), p=0.5))
-    transformations.append(Transforms.Normalize(mean=mean, std=std))
-    if aug_array[11]: transformations.append(Cutout(n_holes=1, length=8))
+    if aug_array[3]:
+        alpha = aug_array[3]
+        scale_min, scale_max = 1-alpha, 1 + (img_dims[0] * alpha)
+        transformations.append(RandomApply(ScaleJitter(target_size=img_dims, scale_range=(scale_min, scale_max), interpolation='bilinear'), aug_array[3]))
     
+    if aug_array[5]:
+        normalize = Transforms.Normalize(mean=mean, std=std)
+        denormalize = Transforms.Normalize(mean=[-m / s for m, s in zip(mean, std)], std=[1 / s for s in std])
+        alpha = aug_array[5]
+        random_sign = random.choice([-1, 1])
+        mu_upper_bound, sigma_upper_bound = 2*0.229, 3*0.229
+        mu_offset = mu_upper_bound * alpha * random_sign
+        sigma_offset = sigma_upper_bound * alpha * random_sign
+
+        if random_sign==-1:
+            sigma_offset = -0.229*alpha
+        else: sigma_offset = ((3*0.229) - 0.229)*alpha
+        transformations.append(normalize)
+        transformations.append(RandomApply(GaussianNoise(mean=0.45+mu_offset, std=0.229+sigma_offset), p=aug_array[5]))
+        transformations.append(denormalize)
+
+    if aug_array[11]: 
+        alpha = aug_array[11]
+        cutout_area = alpha*img_dims[0]*img_dims[1]
+        weight = random.random() #randomly choose weight for num holes and length tradeoff
+        length = int(weight*(math.sqrt(cutout_area)))
+        n_holes = int(cutout_area/(length**2))
+        transformations.append(RandomApply(Cutout(n_holes, length), aug_array[11]))
+    
+    transformations.append(Transforms.Normalize(mean=mean, std=std))
     ret = Transforms.Compose(transformations)
     if verbose: print(f'{verbose} Manual Augmentations: {ret}\nCutmix β: {cutmix_b}\nMixup α: {mixup_a}\n')
     return ret, cutmix_b, mixup_a

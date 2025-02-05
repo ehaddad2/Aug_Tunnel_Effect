@@ -11,6 +11,7 @@ import torchaudio
 import torchaudio.transforms as transforms
 from Utils import Augmentations
 from PIL import Image
+import librosa
 
 
 class Cub2011(Dataset):
@@ -104,8 +105,9 @@ class ESC50Dataset(torch.utils.data.Dataset):
     
     def __getitem__(self, idx):
         file_path, label = self.data[idx]
-        waveform, sr = torchaudio.load(file_path)
- 
+        waveform, sr = librosa.load(file_path, sr=self.sample_rate, mono=True)
+        waveform = torch.from_numpy(waveform).float()
+        waveform = waveform.unsqueeze(0) 
         if self.transform:
             waveform = Transforms.ToPILImage()(self.transform(waveform).repeat(3, 1, 1))
         return waveform, label
@@ -157,7 +159,7 @@ class HAM10000Dataset(Dataset):
     def __len__(self):
         return len(self.data)
     
-def load_dataset(dataset_name:str, base_pth, train_T, test_T, seed): #loads in a dataset with initial transoformations
+def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], seed = None, verbose=False): #loads in a dataset with initial transoformations
     assert(dataset_name)
     dataset_name = str.lower(dataset_name)
     train,test,num_classes = None,None,0
@@ -211,5 +213,5 @@ def load_dataset(dataset_name:str, base_pth, train_T, test_T, seed): #loads in a
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
         train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
 
-    print('\ntrain length: ', len(train), 'test length: ', len(test), '\n')
+    if verbose: print('\ntrain length: ', len(train), 'test length: ', len(test), '\n')
     return train,test,num_classes

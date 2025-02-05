@@ -20,6 +20,11 @@ import argparse
 import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
 from Utils import Augmentations
+from Utils import CustomDatasets
+import Models
+import pandas as pd, re
+import numpy as np
+from scipy.stats import pearsonr
 
 SEED = 30
 EMBEDDING_PATH_STR = "/home/elias/Deep Learning/Research/OOD/models/IN-100_Test1/embeddings/res18_0.pth"
@@ -32,23 +37,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Perform analysis on augmented backbone and probes")
     return parser.parse_args()
 
-def visualize_dataset(dataset, dataset_name, n_samples=5, filename="sampled_images.jpg"):
-    fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
-    mean,std = Augmentations.get_mean_std(dataset_name)
-    mean,std = torch.tensor(mean).view(3, 1, 1), torch.tensor(std).view(3, 1, 1)
-
-    for i in range(n_samples):
-        img, label = dataset[i]
-        img = (img * std) + mean
-        img = img.permute(1, 2, 0).clamp_(0, 1).numpy()
-        axes[i].imshow(img)
-        axes[i].set_title(str(label))
-        axes[i].axis("off")
-    
-    plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
-
 class Analyzer():
     """
     Performs CS analysis and visualization on model embeddings
@@ -58,9 +46,6 @@ class Analyzer():
         self.epochs = epochs
         self.device = device
         assert self.device == 'cuda', 'need cuda devices for embedding analysis'
-
-    def __del__(self):
-        torch.cuda.empty_cache()
 
     def extract_forward_layer(self, dataloader: torch.utils.data.DataLoader, device: torch.device, layer, n_samples) -> torch.Tensor:
         layer_outputs = []
@@ -217,14 +202,174 @@ class Analyzer():
         #visialize & record
         self.visualize(epoch_embeddings, embedding_pth)
 
+    def visualize_embeddings(self, embeddings, save_pth):
+        raise NotImplementedError()
+
 
 
 def main():
-
-    
     args = parse_args()
     #analyzer = Analyzer()
 
 if __name__ == '__main__':
     main()
 
+
+
+def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples=5, filename="sampled_images.jpg"):
+    mean, std = Augmentations.get_mean_std(dataset_name)
+    test_T,_,_ = Augmentations.get_transformations(mean, std, aug_array=[0]*14, verbose="Backbone Test")
+    if not sum(aug_policy):
+        train_T, cutmix_b, mixup_a = Augmentations.get_transformations(mean, std, aug_array=man_aug, verbose="Backbone Train")
+        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, SEED)
+    else:
+        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, SEED)
+        policies = []
+        if aug_policy[0]:
+            policies.append('swav')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 96], [2, 6], policies=policies)
+        if aug_policy[1]:
+            policies.append('barlow')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224], [1, 1], policies=policies)
+        if aug_policy[2]:
+            policies.append('dino')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], policies=policies)
+
+    fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
+    mean, std = Augmentations.get_mean_std(dataset_name)
+    mean, std = torch.tensor(mean).view(3, 1, 1), torch.tensor(std).view(3, 1, 1)
+
+    for i in range(n_samples):
+        img, label = train_dataset[i]
+        img = (img * std) + mean
+        img = img.permute(1, 2, 0).clamp_(0, 1).numpy()
+        
+        axes[i].imshow(img)
+        axes[i].set_title(str(label))
+        axes[i].axis("off")
+    
+    # Get active augmentation names with their values
+    active_augs = [f"{Augmentations.idx_to_man_aug[j]} (ψ={man_aug[j]})" for j in range(len(man_aug)) if man_aug[j] > 0]
+    
+    # Get augmentation policy name if activated
+    aug_policy_name = Augmentations.idx_to_aug_policy.get(aug_policy[0], "Unknown Policy") if aug_policy[0] > 0 else None
+    
+    # Create subtitle
+    subtitle = ""
+    if aug_policy_name:
+        subtitle += f"Policy: {aug_policy_name}\n"
+    subtitle += "Augs: " + (", ".join(active_augs) if active_augs else "None")
+    
+    plt.figtext(0.5, -0.05, subtitle, 
+                 horizontalalignment='center', 
+                 verticalalignment='top',
+                 fontsize=8,
+                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    plt.savefig(filename, bbox_inches='tight')
+    plt.close()
+
+
+def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies, img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc):
+    #arch_type = "CNN" if str.lower(backbone_arch) in ['resnet', 'vgg'] else "ViT"
+    
+    row = [run_id] + man_augs + aug_policies
+    columns = ["Run ID"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
+    """
+    row = [run_id, stem, backbone_arch, arch_type] + man_augs + aug_policies + [img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc]
+    
+    columns = (["Run ID", "Stem", "Spatial Reduction", "Backbone Architecture", "CNN vs ViT"] +
+               [f"manual_aug_{i+1}" for i in range(len(man_augs))] +
+               [f"aug_policy_{i+1}" for i in range(len(aug_policies))] +
+               ["img_dim", "ID Class Count", "OverParam. Level", "Depth", "Backbone Top-1 Accuracy"])
+    """
+    
+    if save_pth.exists():
+        df = pd.read_csv(save_pth)
+        if "Run ID" not in df.columns: df.insert(0, "Run ID", pd.NA)
+        if run_id in df["Run ID"].dropna().values:
+            df.loc[df["Run ID"] == run_id] = row
+        else:
+            new_row = pd.DataFrame([row], columns=columns)
+            df = pd.concat([df, new_row], ignore_index=True)
+    else:
+        df = pd.DataFrame([row], columns=columns)
+    
+    save_df = df.copy()
+    save_df.drop('"Run ID"')
+    df.to_csv(save_df, index=False)
+
+
+import pandas as pd
+
+def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies,
+                                img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc, probe_arch, r, rho, A):
+    
+    row = [run_id, r, rho, A] + man_augs + aug_policies
+    columns = ["Run ID", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
+
+    """
+    row = [run_id, stem, backbone_arch] + man_augs + aug_policies + [img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc, probe_arch, r, rho, A]
+    columns_probe = (["Run ID", "Stem", "Spatial Reduction", "Backbone Architecture", "CNN vs ViT"] +
+                     [f"manual_aug_{i+1}" for i in range(len(man_augs))] +
+                     [f"aug_policy_{i+1}" for i in range(len(aug_policies))] +
+                     ["img_dim", "ID Class Count", "OverParam. Level", "Depth", "Backbone Top-1 Accuracy", "Probe Architecture", 
+                      "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"])
+
+    """
+    if save_pth.exists():
+        df = pd.read_csv(save_pth)
+        if "Run ID" not in df.columns: df.insert(0, "Run ID", pd.NA)
+        if run_id in df["Run ID"].dropna().values:
+            df.loc[df["Run ID"] == run_id] = row
+        else:
+            new_row = pd.DataFrame([row], columns=columns)
+            df = pd.concat([df, new_row], ignore_index=True)
+    else:
+        df = pd.DataFrame([row], columns=columns)
+
+    save_df = df.copy()
+    save_df.drop('"Run ID"')
+    df.to_csv(save_df, index=False)
+
+def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
+    train,_,n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
+    n_samples = len(train)
+    mock_model = Models.Models().get_model(backbone_name, n_classes)
+    P = sum(p.numel() for p in mock_model.parameters() if p.requires_grad)
+    return P/n_samples
+
+
+def compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count):
+    id_layer_res = np.array(id_layer_res)
+    ood_layer_res = np.array(ood_layer_res)
+    
+    # OOD dataset class counts.
+    OOD_ds_class_cnt = {
+        "aircrafts": 100,
+        "cifar-10": 10,
+        "cub-200": 200,
+        "flowers-102": 102,
+        "stl-10": 10,
+        "ninco": 64,
+        "ham10000": 7,
+        "esc-50": 50
+    }
+    chance_acc_id = 1 / id_class_count if id_class_count else 1
+    chance_acc_ood = 1 / OOD_ds_class_cnt.get(ood_ds.lower(), 1)
+    
+    # % OOD Performance Retained.
+    am = np.max(ood_layer_res)
+    ap = ood_layer_res[-1] 
+    r = 100 * (ap / am) if am != 0 else 0
+    
+    # Pearson correlation between ID and OOD probe results.
+    rho, _ = pearsonr(id_layer_res, ood_layer_res)
+    
+    # ID/OOD Alignment.
+    alpha_id = id_layer_res[-1]
+    alpha_ood = ood_layer_res[-1]
+    A = (alpha_id - chance_acc_id) * (alpha_ood - chance_acc_ood)
+    
+    return r, rho, A
