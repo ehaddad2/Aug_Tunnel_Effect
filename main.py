@@ -58,6 +58,7 @@ def parse_args():
     # Shared arguments
     parser.add_argument("--use_wandb", type=bool, default=False, help="Enable Weights & Biases logging.")
     parser.add_argument("--run_name", type=str, default="Untitled Run", help="Name W&B run.")
+    parser.add_argument("--run_ID", type=str, default=None, help="Run ID, if empty will be created automatically")
     parser.add_argument("--run_ID_version", type=str, default="0", help="Run ID version (since deleted runs need a new one)")
     parser.add_argument("--use_ddp", type=bool, default=False, help="Train model on multiple GPUs using DDP paradigm")
     parser.add_argument("--use_tpu", type=bool, default=False, help="Set to true if training on TPUs") 
@@ -87,12 +88,9 @@ if __name__ == '__main__':
         mp.set_start_method('spawn', force=True)
     print(f'\nDevice being used: ', device if device else 'TPU', '\n')
     
-    title = (
-    f"backbone_{args.backbone_architecture}+{args.backbone_dataset_name}+man_aug{encode_vector(args.backbone_man_aug_setting)}+policy_aug{encode_vector(args.backbone_aug_policy_setting)}"
-    f"+probe_{args.probe_architecture}")
-    run_id = f"backbone_{args.backbone_architecture}+{args.backbone_dataset_name}+man_aug{args.backbone_man_aug_setting}+policy_aug{args.backbone_aug_policy_setting}"
+    run_id = f"backbone_{args.backbone_architecture}-{args.backbone_dataset_name}-man_aug_{encode_vector(args.backbone_man_aug_setting)}-policy_aug_{encode_vector(args.backbone_aug_policy_setting)}" if args.run_ID=="" else args.run_ID
     if args.use_wandb:
-        wandb_run_id = run_id + f'+v{args.run_ID_version}'
+        wandb_run_id = run_id + f'-v{args.run_ID_version}'
         wandb.init(
             project="Aug & Tunnel Effect",
             id=wandb_run_id,
@@ -108,7 +106,7 @@ if __name__ == '__main__':
     -----------------|
     """
     backbone_results = None
-    probe_layers = Models.get_all_probe_layer_names(args.backbone_architecture) if args.probe_layers[0]== 'all' else args.probe_layers
+    probe_layers = Models.get_all_probe_layer_names(args.backbone_architecture) if (args.probe_layers and str.lower(args.probe_layers[0]) == 'all') else args.probe_layers
     if not Path.exists(Path(args.backbone_pth)):
         manager = Manager()
         backbone_ret = manager.dict()
@@ -223,7 +221,7 @@ if __name__ == '__main__':
     -----------------|
     """
     probe_results = {}  # {dataset: [layer1_acc, layer2_acc, ...]}
-    probing_datasets = get_probe_dataset_names([args.backbone_dataset_base_pth, args.probe_datasets_base_pth], args.backbone_dataset_name) if str.lower(args.probe_datasets[0]) == 'all' else [args.backbone_dataset_name] + args.probe_datasets
+    probing_datasets = get_probe_dataset_names([args.backbone_dataset_base_pth, args.probe_datasets_base_pth], args.backbone_dataset_name) if (args.probe_datasets and str.lower(args.probe_datasets[0]) == 'all') else args.probe_datasets
     manager = Manager()
     print(f'Probing: {[ds for ds in probing_datasets]}')
     for i in range(len(probing_datasets)):
@@ -381,20 +379,21 @@ if __name__ == '__main__':
     """
     print(f'Probe Results Dict: {probe_results}')
     
-    # gather summary info for probes & save
-    probe_csv_dir = Path("./csv_results")
-    if not Path.exists(probe_csv_dir): probe_csv_dir.mkdir(parents=True, exist_ok=True)
-    probe_csv_path = Path("./csv_results/Probes.csv")
-    ood_accs_list = []
-    id_layer_res = probe_results[args.backbone_dataset_name]
-    id_ds = probing_datasets[0]
-    for ood_ds in probing_datasets: #for each OOD dataset, we need ID acc and OOD acc vectors (for that dataset) to find 3 metrics, and plot them all on this row
-        if ood_ds == args.backbone_dataset_name: continue
-        ood_layer_res = probe_results[ood_ds]
-        print(f'ID layer res: {id_layer_res}\nOOD layer res: {ood_layer_res}')
-        r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count)
-    
-        analysis.summarize_probe_experiments(run_id, probe_csv_path, args.backbone_architecture, args.backbone_man_aug_setting, 
-                                         args.backbone_aug_policy_setting, args.img_dims, id_class_count, overparam_lvl, len(probe_layers),
-                                         backbone_acc, args.probe_architecture, r, rho, A)
+    if probe_results:
+        # gather summary info for probes & save
+        probe_csv_dir = Path("./csv_results")
+        if not Path.exists(probe_csv_dir): probe_csv_dir.mkdir(parents=True, exist_ok=True)
+        probe_csv_path = Path("./csv_results/Probes.csv")
+        ood_accs_list = []
+        id_layer_res = probe_results[args.backbone_dataset_name]
+        id_ds = probing_datasets[0]
+        for ood_ds in probing_datasets: #for each OOD dataset, we need ID acc and OOD acc vectors (for that dataset) to find 3 metrics, and plot them all on this row
+            if ood_ds == args.backbone_dataset_name: continue
+            ood_layer_res = probe_results[ood_ds]
+            print(f'ID layer res: {id_layer_res}\nOOD layer res: {ood_layer_res}')
+            r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count)
+        
+            analysis.summarize_probe_experiments(run_id, probe_csv_path, args.backbone_architecture, args.backbone_man_aug_setting, 
+                                            args.backbone_aug_policy_setting, args.img_dims, id_class_count, overparam_lvl, len(probe_layers),
+                                            backbone_acc, args.probe_architecture, r, rho, A)
     

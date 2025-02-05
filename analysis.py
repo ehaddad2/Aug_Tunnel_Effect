@@ -274,16 +274,10 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
 def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies, img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc):
     #arch_type = "CNN" if str.lower(backbone_arch) in ['resnet', 'vgg'] else "ViT"
     
-    row = [run_id] + man_augs + aug_policies
-    columns = ["Run ID"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
-    """
-    row = [run_id, stem, backbone_arch, arch_type] + man_augs + aug_policies + [img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc]
-    
-    columns = (["Run ID", "Stem", "Spatial Reduction", "Backbone Architecture", "CNN vs ViT"] +
-               [f"manual_aug_{i+1}" for i in range(len(man_augs))] +
-               [f"aug_policy_{i+1}" for i in range(len(aug_policies))] +
-               ["img_dim", "ID Class Count", "OverParam. Level", "Depth", "Backbone Top-1 Accuracy"])
-    """
+    row = [run_id, backbone_arch] + man_augs + aug_policies + [img_dim, id_class_cnt, backbone_acc]
+    columns = (["Run ID", "Backbone Architecture"] 
+               + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))] 
+               + ["img_dim", "ID Class Count", "Backbone Top-1 Accuracy"])
     
     if save_pth.exists():
         df = pd.read_csv(save_pth)
@@ -295,13 +289,9 @@ def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, au
             df = pd.concat([df, new_row], ignore_index=True)
     else:
         df = pd.DataFrame([row], columns=columns)
-    
-    save_df = df.copy()
-    save_df.drop('"Run ID"')
-    df.to_csv(save_df, index=False)
 
+    df.to_csv(save_pth, index=False)
 
-import pandas as pd
 
 def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies,
                                 img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc, probe_arch, r, rho, A):
@@ -329,9 +319,7 @@ def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_p
     else:
         df = pd.DataFrame([row], columns=columns)
 
-    save_df = df.copy()
-    save_df.drop('"Run ID"')
-    df.to_csv(save_df, index=False)
+    df.to_csv(save_pth, index=False)
 
 def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
     train,_,n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
