@@ -447,12 +447,12 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         max_w, max_h, strength = img_dims[0], img_dims[1], aug_array[1]
         max_area = max_w*max_h
         crop_dim = int(math.sqrt(max_area*(1-strength+0.0001)))
-        transformations.append(RandomApply(Transforms.RandomResizedCrop(size=crop_dim), p=aug_array[1]))
+        transformations.append(Transforms.RandomResizedCrop(size=crop_dim))
 
-    if aug_array[2]:
-        alpha = aug_array[2] #distribute weight evenly among param
+    if aug_array[2]: #TODO: too heavy
+        alpha = aug_array[2] 
         deg_min,deg_max = alpha*(-180), alpha*180
-        scale_min, scale_max = 1-alpha+0.1, 1 + (254 * alpha)
+        scale_min, scale_max = 1/(1 + (254 * alpha)), 1 + (254 * alpha)
         print(scale_min, scale_max)
         deg = alpha*90*random.choice([-1,1])
         transformations.append(RandomApply(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(scale_min, scale_max), shear=deg), aug_array[2]))
@@ -483,7 +483,7 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
     cutmix_b = aug_array[13]
 
     transformations.append(Transforms.ToTensor())
-    if aug_array[3]:
+    if aug_array[3]: #TODO: too heavy
         alpha = aug_array[3]
         scale_min, scale_max = 1-alpha, 1 + (img_dims[0] * alpha)
         transformations.append(RandomApply(ScaleJitter(target_size=img_dims, scale_range=(scale_min, scale_max), interpolation='bilinear'), aug_array[3]))
