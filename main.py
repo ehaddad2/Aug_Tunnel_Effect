@@ -200,21 +200,20 @@ if __name__ == '__main__':
                 "Backbone Loss Chart": backbone_loss_chart
             })
         backbone_acc = backbone_results['max_test_acc']
+        # gather summary info & save
+        backbone_csv_dir = Path("./csv_results/")
+        backbone_csv_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = backbone_csv_dir / 'Backbones.csv'
+        m = re.search(r'\d+', args.backbone_dataset_name)
+        id_class_count = int(m.group()) if m else None
+        overparam_lvl = analysis.compute_overparam_val(args.backbone_architecture, args.backbone_dataset_base_pth, args.backbone_dataset_name)
 
+        analysis.summarize_backbone_experiments(run_id, csv_path, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting,
+                                                args.img_dims, id_class_count, overparam_lvl, len(probe_layers), backbone_acc)
     else: 
         print(f"Backbone {args.backbone_pth} found, probing with this.")
         backbone_acc = args.backbone_t1Max
 
-    # gather summary info & save
-    backbone_csv_dir = Path("./csv_results/")
-    backbone_csv_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = backbone_csv_dir / 'Backbones.csv'
-    m = re.search(r'\d+', args.backbone_dataset_name)
-    id_class_count = int(m.group()) if m else None
-    overparam_lvl = analysis.compute_overparam_val(args.backbone_architecture, args.backbone_dataset_base_pth, args.backbone_dataset_name)
-
-    analysis.summarize_backbone_experiments(run_id, csv_path, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting,
-                                            args.img_dims, id_class_count, overparam_lvl, len(probe_layers), backbone_acc)
     """
     -----------------|
     Probe Training   |
