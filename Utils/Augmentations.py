@@ -51,11 +51,18 @@ class PadToSize(object):
         self.out_H = out_H
         self.out_W = out_W
 
-    def __call__(self, img:torch.Tensor):
+    def __call__(self, img: torch.Tensor):
         C, H, W = img.shape
         pad_H = max(0, self.out_H - H)
         pad_W = max(0, self.out_W - W)
-        img = F.pad(img, (0, pad_W, 0, pad_H), value=0) #pad on bottom & right
+        
+        top_pad = torch.randint(0, pad_H + 1, (1,)).item() if pad_H > 0 else 0
+        left_pad = torch.randint(0, pad_W + 1, (1,)).item() if pad_W > 0 else 0
+        
+        bottom_pad = pad_H - top_pad
+        right_pad = pad_W - left_pad
+        
+        img = F.pad(img, (left_pad, right_pad, top_pad, bottom_pad), value=0)
         return img
 
 class GaussianBlur(object):
