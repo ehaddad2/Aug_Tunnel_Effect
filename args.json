@@ -15,7 +15,7 @@
     "use_tpu": true,
     "probe_datasets_base_pth": "./data/OOD/",
     "probe_datasets": [],
-    "probe_pth": "./models/Probes/resnet18/imagenet-100/aug:1.pth",
+    "probe_pth": "./models/Probes/resnet18/imagenet-100/aug:5.pth",
     "probe_architecture": "lp1",
     "probe_layers": [],
     "probe_lr": 0.01,
@@ -28,5 +28,6 @@
     "run_ID": "",
     "run_ID_version": "1",
     "img_dims": 224,
+    "loader_workers": 24
     "loader_workers": 24
 }

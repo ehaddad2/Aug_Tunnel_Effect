@@ -1,2 +1,3 @@
 Run ID,Backbone Architecture,manual_aug_1,manual_aug_2,manual_aug_3,manual_aug_4,manual_aug_5,manual_aug_6,manual_aug_7,manual_aug_8,manual_aug_9,manual_aug_10,manual_aug_11,manual_aug_12,manual_aug_13,manual_aug_14,aug_policy_1,aug_policy_2,aug_policy_3,img_dim,ID Class Count,Backbone Top-1 Accuracy
-backbone_resnet18-imagenet-100-man_aug_5099-policy_aug_1445,resnet18,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,224,100,67.95769230769231
+backbone_resnet18-imagenet-100-man_aug_5099-policy_aug_1445,resnet18,0.0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,224,100,67.95769230769231
+backbone_resnet18-imagenet-100-man_aug_895-policy_aug_1445,resnet18,0.5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,224,100,72.71538461538462
