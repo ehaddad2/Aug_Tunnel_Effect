@@ -163,7 +163,7 @@ if __name__ == '__main__':
                 args.backbone_label_smoothing,
                 args.backbone_epochs,
                 args.backbone_batch_size,
-                backbone_ret), nprocs=4)
+                backbone_ret), nprocs=None)
 
         backbone_results = backbone_ret[0]
         

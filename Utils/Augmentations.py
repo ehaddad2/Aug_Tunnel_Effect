@@ -453,9 +453,8 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         alpha = aug_array[2] #distribute weight evenly among param
         deg_min,deg_max = alpha*(-180), alpha*180
         scale_min, scale_max = 1/(1 + (img_dims[0] * alpha)), 1 + (img_dims[0] * alpha)
-        print(scale_min, scale_max)
         deg = alpha*90*random.choice([-1,1])
-        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(scale_min, scale_max), shear=deg))
+        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(0.1,2), shear=deg))
 
     # 2) Color transforms (PIL)
     if aug_array[6]:
