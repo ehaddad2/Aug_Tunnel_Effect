@@ -159,8 +159,7 @@ class HAM10000Dataset(Dataset):
     def __len__(self):
         return len(self.data)
     
-def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], seed = None, verbose=False): #loads in a dataset with initial transoformations
-    assert(dataset_name)
+def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha=None, mixup_alpha=None, seed = None, verbose=False): #loads in a dataset with initial transoformations
     dataset_name = str.lower(dataset_name)
     train,test,num_classes = None,None,0
 
@@ -187,7 +186,7 @@ def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], seed = None,
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = len(dataset.classes)
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
     elif dataset_name == 'oxford-pets':
         train,test = datasets.OxfordIIITPet(root=base_pth+'oxford-pets', split='trainval', transform=train_T, download=True), Cub2011(root=base_pth+'oxford-pets', split='train', transform=train_T, download=True)
         num_classes = 200
@@ -197,7 +196,7 @@ def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], seed = None,
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = 7
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
     elif dataset_name == 'esc-50':
         mel_transform = transforms.MelSpectrogram(sample_rate=44100, n_fft=2205,hop_length=441)
         ds_pth = base_pth+dataset_name
@@ -205,13 +204,13 @@ def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], seed = None,
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = 50
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
     else: 
         dataset = torchvision.datasets.ImageFolder(base_pth+dataset_name)
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = len(dataset.classes)
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(dataset=train, transforms=train_T), Augmentations.custom(test, transforms=test_T)
+        train,test = Augmentations.custom(train, train_T, num_classes, cutmix_alpha, mixup_alpha), Augmentations.custom(test, test_T, num_classes)
 
     if verbose: print('\ntrain length: ', len(train), 'test length: ', len(test), '\n')
     return train,test,num_classes

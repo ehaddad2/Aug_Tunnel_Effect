@@ -1,3 +1,4 @@
+
 """
 Contains functions for training and testing a PyTorch model on CPU and GPU (DP & DDP).
 """
@@ -31,7 +32,7 @@ def LW_Scheduler(optimizer, warmup_epochs):
 """
 -----------------------------------------------------------------------------------------------------------------------------------------------
 """
-def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, ep:int, loss_fn: torch.nn.Module, optimizer: torch.optim.Optimizer, cutmix_beta, mixup_alpha, device: torch.device) -> Tuple[float, float]:
+def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, ep:int, loss_fn: torch.nn.Module, optimizer: torch.optim.Optimizer, device: torch.device) -> Tuple[float, float]:
     model.train()
     train_loss, train_acc = 0, 0
     world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
@@ -46,26 +47,7 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
     
     for batch_idx, (X, y) in enumerate(dataloader):
         X, y = X.to(device), y.to(device)
-        
-        
-        if cutmix_beta > 0: #perform cutmix
-            X_cm, y_m, lam = Augmentations.cutmix_data(X, y, cutmix_beta)
-            outputs = model(X_cm)
-            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
-
-        elif mixup_alpha > 0: #perform mixup
-            X_m, _, y_m, lam = Augmentations.mixup_data(X, y, mixup_alpha)
-            outputs = model(X_m)
-            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
-
-        elif (mixup_alpha > 0) and (cutmix_beta > 0): #perform both
-            X_m, _, y_m, lam = Augmentations.mixup_data(X, y, mixup_alpha)
-            X_cm, y_m, lam = Augmentations.cutmix_data(X_m, y_m, cutmix_beta)
-            outputs = model(X_cm)
-            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
-
-        else: #no reg
-            outputs = model(X)
+        outputs = model(X)
             
         loss = loss_fn(outputs, y)
         predicted = outputs.argmax(dim=1)
@@ -148,7 +130,7 @@ def test_step(model: nn.Module, dataloader: DataLoader, ep:int, loss_fn: nn.Modu
     
     return test_loss, test_acc
 
-def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataLoader,  optimizer: Optimizer, loss_fn: nn.Module, epochs: int, device: torch.device, warmup_epochs: int = 0, CosAnnealing=False, cutmix_beta=0.0, mixup_alpha=0.0) -> Dict[str, List]:
+def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataLoader,  optimizer: Optimizer, loss_fn: nn.Module, epochs: int, device: torch.device, warmup_epochs: int = 0, CosAnnealing=False) -> Dict[str, List]:
 
     results = {"train_loss": [], "train_acc": [], 
                "test_loss": [], "test_acc": [],
@@ -165,7 +147,7 @@ def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataL
         if hasattr(train_dataloader.sampler, 'set_epoch'): train_dataloader.sampler.set_epoch(epoch)
     
     
-        train_loss, train_acc = train_step(model, train_dataloader, epoch+1, loss_fn, optimizer, cutmix_beta, mixup_alpha, device)
+        train_loss, train_acc = train_step(model, train_dataloader, epoch+1, loss_fn, optimizer, device)
         if epoch < warmup_epochs:
             warmup_scheduler.step()
         elif CosAnnealing:

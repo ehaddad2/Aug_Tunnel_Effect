@@ -46,6 +46,67 @@ idx_to_aug_policy = {
 """
 Helper funcs/classes
 """
+    
+class ManualAugDataset(Dataset):
+    def __init__(self, dataset, transform=None, cutmix_alpha=0.0, mixup_alpha=0.0, num_classes=10):
+        """
+        Args:
+            dataset: the base dataset
+            mixup_alpha: parameter for mixup (set to 0 to disable)
+            cutmux_alpha: parameter for cutmix (set to 0 to disable)
+            num_classes: number of classes (for one-hot encoding labels)
+        """
+        self.dataset = dataset
+        self.transform = transform
+        self.mixup_alpha = mixup_alpha
+        self.cutmix_alpha = cutmix_alpha
+        self.num_classes = num_classes
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        x1, y1 = self.dataset[index]
+        if self.transform: x1 = self.transform(x1)
+        if not self.mixup_alpha and not self.cutmix_alpha: return x1,y1
+        index2 = random.randint(0, len(self.dataset) - 1)
+        x2, y2 = self.dataset[index2]
+        if self.transform: x2 = self.transform(x2)
+
+        #apply cutmix and mixup if needed
+        if self.mixup_alpha and not self.cutmix_alpha: return self.apply_mixup(x1, y1, x2, y2)
+        elif not self.mixup_alpha and self.cutmix_alpha: return self.apply_cutmix(x1, y1, x2, y2)
+        elif self.mixup_alpha and self.cutmix_alpha: 
+            X_m, _ = self.apply_mixup(x1, y1, x2, y2)
+            X_c, _ = self.apply_cutmix(X_m, y1, x2, y2)
+            return X_c, y1
+
+    def apply_mixup(self, x1, y1, x2, y2): #from https://github.com/facebookresearch/mixup-cifar10/blob/main/train.py
+        lam = torch.distributions.Beta(self.mixup_alpha, self.mixup_alpha).sample().item()
+        mixed_x = lam * x1 + (1 - lam) * x2
+        return mixed_x, y1
+
+    def apply_cutmix(self, x1, y1, x2, y2): #based on https://github.com/clovaai/CutMix-PyTorch/blob/master/train.py
+        lam = torch.distributions.Beta(self.cutmix_alpha, self.cutmix_alpha).sample().item()
+        _, H, W = x1.shape
+        bbx1, bby1, bbx2, bby2 = self.rand_bbox(H, W, lam)
+        mixed_x = x1.clone()
+        mixed_x[:, bbx1:bbx2, bby1:bby2] = x2[:, bbx1:bbx2, bby1:bby2]
+        lam_adjusted = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (H * W))
+        return mixed_x, y1
+
+    def rand_bbox(self, H, W, lam):
+        cut_rat = math.sqrt(1. - lam)
+        cut_w = int(W * cut_rat)
+        cut_h = int(H * cut_rat)
+        cx = random.randint(0, W)
+        cy = random.randint(0, H)
+        bbx1 = max(cx - cut_w // 2, 0)
+        bby1 = max(cy - cut_h // 2, 0)
+        bbx2 = min(cx + cut_w // 2, W)
+        bby2 = min(cy + cut_h // 2, H)
+        return bbx1, bby1, bbx2, bby2
+
 class PadToSize(object):
     def __init__(self, out_H=224, out_W=224):
         self.out_H = out_H
@@ -97,19 +158,6 @@ class Solarization(object):
             return ImageOps.solarize(img)
         else:
             return img
-
-class AugDataset(Dataset):
-    def __init__(self, dataset, transform=None):
-        self.dataset = dataset
-        self.transform = transform
-        
-    def __getitem__(self, index):
-        x, y = self.dataset[index]
-        if self.transform: x = self.transform(x)
-        return x, y
-        
-    def __len__(self):
-        return len(self.dataset)
     
 class RandomApply(nn.Module): #from: https://arxiv.org/pdf/2006.07733
     def __init__(self, fn, p):
@@ -155,29 +203,11 @@ def get_mean_std(dataset_name:str):
     elif 'imagenet' in dataset_name: mean,std = [0.482, 0.458, 0.408], [0.269, 0.261, 0.276]
     return mean,std
 
-def custom(dataset, transforms) -> Dataset:
+def custom(dataset, transforms, num_classes, cutmix_alpha=0, mixup_alpha=0) -> Dataset:
     if not isinstance(transforms, Transforms.Compose): 
         composed = Transforms.Compose(*transforms) if len(transforms)>0 else None
     else: composed = transforms
-    return AugDataset(dataset, composed)
-
-def rand_bbox(size, lam): #based on https://github.com/clovaai/CutMix-PyTorch/blob/master/train.py
-    W = size[2]
-    H = size[3]
-    cut_rat = np.sqrt(1. - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
-
-    # uniform
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
-
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
-    return bbx1, bby1, bbx2, bby2
+    return ManualAugDataset(dataset, composed, cutmix_alpha, mixup_alpha, num_classes)
     
 def color_distortion(brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2): #based on https://arxiv.org/pdf/2006.09882
     color_jitter = Transforms.ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
@@ -405,31 +435,6 @@ class Cutout(object):
         img = img * mask
 
         return img
-    
-def mixup_data(x, y, alpha=1.0, n_classes=10): #from https://github.com/facebookresearch/mixup-cifar10/blob/main/train.py
-    '''Returns mixed inputs, rand input idx's, pairs of targets, and lambda'''
-    if alpha > 0: lam = np.random.beta(alpha, alpha)
-    else: lam = 1
-
-    batch_size = x.size()[0]
-    index = torch.randperm(batch_size)
-
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-
-    #temper https://arxiv.org/pdf/2009.04659 
-    y_onehot = torch.nn.functional.one_hot(y, num_classes=n_classes).float()
-    y_index_onehot = torch.nn.functional.one_hot(y[index], num_classes=n_classes).float()
-    y_mixed = lam * y_onehot + (1 - lam) * y_index_onehot
-    y_rebalanced = abs(2 * lam - 1) * y_mixed + (1 - abs(2 * lam - 1)) / n_classes
-    return mixed_x, index, y_rebalanced, lam
-
-def cutmix_data(x, y, beta=1.0): #based on https://github.com/clovaai/CutMix-PyTorch/blob/master/train.py
-    '''Returns cutmixed inputs, pairs of targets, and lambda'''
-    mixed_x, rand_index, y_m, lam = mixup_data(x,y, beta)
-    bbx1, bby1, bbx2, bby2 = rand_bbox(input.size(), lam)
-    x[:, :, bbx1:bbx2, bby1:bby2] = x[rand_index, :, bbx1:bbx2, bby1:bby2]
-    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size()[-1] * x.size()[-2]))
-    return mixed_x, y_m, lam
 
 def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0): #from https://arxiv.org/pdf/2009.04659 
     log_probs = torch.nn.functional.log_softmax(pred, dim=1)
@@ -460,8 +465,9 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         alpha = aug_array[2] #distribute weight evenly among param
         deg_min,deg_max = alpha*(-180), alpha*180
         scale_min, scale_max = 1/(1 + (img_dims[0] * alpha)), 1 + (img_dims[0] * alpha)
+        print(scale_min, scale_max)
         deg = alpha*90*random.choice([-1,1])
-        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(0.1,2), shear=deg))
+        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(scale_min, scale_max), shear=deg))
 
     # 2) Color transforms (PIL)
     if aug_array[6]:
@@ -491,7 +497,7 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         transformations.append(TransformsV2.GaussianBlur(kernel_size=(kernel_min, kernel_max), sigma=(sigma_min, sigma_max)))
 
     mixup_a = aug_array[12]
-    cutmix_b = aug_array[13]
+    cutmix_a = aug_array[13]
 
     transformations.append(Transforms.ToTensor())
     if aug_array[3]:
@@ -526,5 +532,5 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
     transformations.append(PadToSize(out_H=img_dims[0], out_W=img_dims[1]))
     transformations.append(Transforms.Normalize(mean=mean, std=std))
     ret = Transforms.Compose(transformations)
-    if verbose: print(f'{verbose} Manual Augmentations: {ret}\nCutmix β: {cutmix_b}\nMixup α: {mixup_a}\n')
-    return ret, cutmix_b, mixup_a
+    if verbose: print(f'{verbose} Manual Augmentations: {ret}\nCutmix α: {cutmix_a}\nMixup α: {mixup_a}\n')
+    return ret

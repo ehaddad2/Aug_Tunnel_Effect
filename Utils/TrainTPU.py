@@ -32,7 +32,7 @@ def LW_Scheduler(optimizer, warmup_epochs):
 """ 
 -----------------------------------------------------------------------------------------------------------------------------------------------
 """
-def train_step(model, dataloader, ep, loss_fn, optimizer, cutmix_beta, mixup_alpha, device: torch.device) -> Tuple[float, float]:
+def train_step(model, dataloader, ep, loss_fn, optimizer, device: torch.device) -> Tuple[float, float]:
     model.train()
     acc, loss, ep_acc, ep_loss, N = 0, 0, 0, 0, 0
     rank = xm.get_ordinal()
@@ -42,20 +42,8 @@ def train_step(model, dataloader, ep, loss_fn, optimizer, cutmix_beta, mixup_alp
         optimizer.zero_grad()
         X = X.to(device)
         y = y.to(device)
-        if cutmix_beta:
-            X_cm, y_m, lam = Augmentations.cutmix_data(X, y, cutmix_beta)
-            outputs = model(X_cm)
-            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
-        elif mixup_alpha:
-            X_m, _, y_m, lam = Augmentations.mixup_data(X, y, mixup_alpha)
-            outputs = model(X_m)
-            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
-        elif mixup_alpha and cutmix_beta:
-            X_m, _, y_m, lam = Augmentations.mixup_data(X, y, mixup_alpha)
-            X_cm, y_m, lam = Augmentations.cutmix_data(X_m, y_m, cutmix_beta)
-            outputs = model(X_cm)
-            #loss = ManualAugs.tempered_mixup_criterion(outputs, y_m, lam, len(dataloader.dataset.classes), zeta=1)
-        else: outputs = model(X)
+
+        outputs = model(X)
         pred = outputs.argmax(dim=1)
         loss = loss_fn(outputs, y)
         ep_loss += loss.item()
@@ -108,7 +96,7 @@ def test_step(model: nn.Module, dataloader: DataLoader, ep: int, loss_fn: nn.Mod
     return float(ep_acc), ep_loss
 
 def train(model, train_dataloader, test_dataloader, train_sampler, optimizer, loss_fn, epochs: int, device: torch.device, 
-          warmup_epochs: int = 0, CosAnnealing=False, cutmix_beta=0.0, mixup_alpha=0.0) -> Dict[str, List]:
+          warmup_epochs: int = 0, CosAnnealing=False) -> Dict[str, List]:
     results = {
         "train_loss": [], "train_acc": [],
         "test_loss": [], "test_acc": [],
@@ -123,7 +111,7 @@ def train(model, train_dataloader, test_dataloader, train_sampler, optimizer, lo
     
     for epoch in range(epochs):
         train_sampler.set_epoch(epoch)
-        train_acc, train_loss = train_step(model, train_dataloader, epoch+1, loss_fn, optimizer, cutmix_beta, mixup_alpha, device)
+        train_acc, train_loss = train_step(model, train_dataloader, epoch+1, loss_fn, optimizer, device)
         test_acc, test_loss = test_step(model, test_dataloader, epoch+1, loss_fn, device)
         
         if epoch < warmup_epochs:

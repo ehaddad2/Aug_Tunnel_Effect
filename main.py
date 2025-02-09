@@ -69,9 +69,13 @@ def parse_args():
 def get_probe_dataset_names(base_pths, id_ds_name):
     datasets = [id_ds_name, 'aircrafts', 'cifar-10', 'cub-200', 'flowers-102', 'stl-10', 'ninco', 'ham10000', 'esc-50']
     ret = []
-    for base_pth in base_pths:
+    for base_pth in base_pths: #add in current datasets
         if not os.path.isdir(base_pth): raise NotADirectoryError(f"{base_pth} is not a directory.")
         else: ret += [filename for filename in os.listdir(base_pth)]
+    
+    for ds in datasets: #add in missing ones
+        if ds not in ret: ret.append(ds)
+
     return ret
 
 def encode_vector(vector):

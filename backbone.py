@@ -35,7 +35,7 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, architecture
     Worker for cpu training or if cuda available, can train DP model
     """
 
-    train_dataset, test_dataset, num_classes, cutmix_b, mixup_a = prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth)
+    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth, True)
     train_loader = DataLoader(train_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     test_loader = DataLoader(test_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     model = Models.Models().get_model(architecture, num_classes=num_classes).to(device)
@@ -52,9 +52,7 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, architecture
         epochs,
         device,
         warmup_epochs,
-        use_cos_annealing,
-        cutmix_b,
-        mixup_a)
+        use_cos_annealing)
     
     Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), backbone_pth)
@@ -67,7 +65,7 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
     worker for cuda DDP
     """
     world_size = torch.distributed.get_world_size()
-    train_dataset, test_dataset, num_classes, cutmix_b, mixup_a = prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth)
+    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth, rank==0)
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12357'
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
@@ -92,9 +90,7 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         epochs, 
         rank, 
         warmup_epochs,
-        use_cos_annealing,
-        cutmix_b,
-        mixup_a)
+        use_cos_annealing)
 
     if rank == 0:
         Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
@@ -111,10 +107,9 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
     """
 
     rank = xm.get_ordinal()
-    train_dataset, test_dataset, num_classes, cutmix_b, mixup_a = prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth)
+    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth, xm.is_master_ordinal())
     device = xm.xla_device()
     model = Models.Models().get_model(architecture, num_classes=num_classes)
-    #model = FSDP(model, auto_wrap_policy=always_wrap_policy)
     model.to(device)
     xm.broadcast_master_param(model)
     train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -148,7 +143,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
     train_loader = pl.MpDeviceLoader(
         train_loader, 
         device,
-        loader_prefetch_size=512,
+        loader_prefetch_size=128,
         device_prefetch_size=2,
         host_to_device_transfer_threads=8)
     test_loader = pl.MpDeviceLoader(
@@ -171,9 +166,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         epochs,
         device,
         warmup_epochs=warmup_epochs,
-        CosAnnealing=use_cos_annealing,
-        cutmix_beta=cutmix_b,
-        mixup_alpha=mixup_a)
+        CosAnnealing=use_cos_annealing)
 
     if xm.is_master_ordinal():
         Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
@@ -188,15 +181,16 @@ Helper Functions |
 -----------------|
 """
 
-def prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth):
+def prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, dataset_base_pth, verbose=False):
     mean, std = Augmentations.get_mean_std(dataset_name)
-    test_T, _, _ = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Backbone Test")
+    test_T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Backbone Test" if verbose else None)
     
     if not sum(policy_aug_setting):
-        train_T, cutmix_b, mixup_a = Augmentations.get_transformations(mean, std, aug_array=man_aug_setting, img_dims=(img_dims, img_dims), verbose="Backbone Train")
-        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, train_T, test_T, SEED)
+        train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug_setting, img_dims=(img_dims, img_dims), verbose="Backbone Train" if verbose else None)
+        cutmix_a, mixup_a = man_aug_setting[-1], man_aug_setting[-2]
+        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, train_T, test_T, cutmix_alpha=cutmix_a, mixup_alpha=mixup_a, seed=SEED, verbose=verbose)
     else:
-        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T.Compose([]), test_T, SEED)
+        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, test_T, test_T, seed=SEED, verbose=verbose)
         policies = []
         if policy_aug_setting[0]:
             policies.append('swav')
@@ -208,4 +202,4 @@ def prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, datas
             policies.append('dino')
             train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], policies=policies)
     
-    return train_dataset, test_dataset, num_classes, cutmix_b, mixup_a
+    return train_dataset, test_dataset, num_classes

@@ -31,7 +31,7 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_
     Worker for cpu training or if cuda available, can train DP model
     """
 
-    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth)
+    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, True)
     train_loader = DataLoader(train_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     test_loader = DataLoader(test_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
@@ -59,7 +59,7 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
     worker for cuda DDP
     """
     world_size = torch.distributed.get_world_size()
-    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth)
+    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, rank==0)
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12358'
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
@@ -99,7 +99,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
     """
     
     rank = xm.get_ordinal()
-    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth)
+    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, xm.is_master_ordinal())
 
     device = xm.xla_device()
     model = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer).to(device)
@@ -162,10 +162,10 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
 Helper Functions |
 -----------------|
 """
-def prep_data(dataset_name, img_dims, dataset_base_pth):
+def prep_data(dataset_name, img_dims, dataset_base_pth, verbose=False):
     mean, std = Augmentations.get_mean_std(dataset_name)
-    T, _, _ = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if xm.is_master_ordinal() else None)
-    train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, SEED, xm.is_master_ordinal())
+    T, _, _ = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
+    train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, seed=SEED, verbose=verbose)
     return train_dataset, test_dataset, num_classes
 
 def initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer):# TODO: support probe_arch

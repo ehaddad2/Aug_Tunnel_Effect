@@ -218,12 +218,12 @@ if __name__ == '__main__':
 
 def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples=5, filename="sampled_images.jpg"):
     mean, std = Augmentations.get_mean_std(dataset_name)
-    test_T,_,_ = Augmentations.get_transformations(mean, std, aug_array=[0]*14, verbose="Backbone Test")
+    test_T = Augmentations.get_transformations(mean, std, aug_array=[0]*14, verbose="Backbone Test")
     if not sum(aug_policy):
-        train_T, cutmix_b, mixup_a = Augmentations.get_transformations(mean, std, aug_array=man_aug, verbose="Backbone Train")
-        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, SEED)
+        train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug, verbose="Backbone Train")
+        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2], verbose=True)
     else:
-        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, SEED)
+        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED, verbose=True)
         policies = []
         if aug_policy[0]:
             policies.append('swav')
@@ -235,7 +235,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
             policies.append('dino')
             train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], policies=policies)
 
-    fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
+    _, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
     mean, std = Augmentations.get_mean_std(dataset_name)
     mean, std = torch.tensor(mean).view(3, 1, 1), torch.tensor(std).view(3, 1, 1)
 
@@ -290,7 +290,8 @@ def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, au
     else:
         df = pd.DataFrame([row], columns=columns)
 
-    df.to_csv(save_pth, index=False)
+    df.index = [x for x in range(1, len(df.values)+1)]
+    df.to_csv(save_pth)
 
 
 def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies,
@@ -319,7 +320,7 @@ def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_p
     else:
         df = pd.DataFrame([row], columns=columns)
 
-    df.to_csv(save_pth, index=False)
+    df.to_csv(save_pth)
 
 def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
     train,_,n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
