@@ -464,10 +464,12 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
     if aug_array[2]:
         alpha = aug_array[2] #distribute weight evenly among param
         deg_min,deg_max = alpha*(-180), alpha*180
-        scale_min, scale_max = 1/(1 + (img_dims[0] * alpha)), 1 + (img_dims[0] * alpha)
-        print(scale_min, scale_max)
-        deg = alpha*90*random.choice([-1,1])
-        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=(scale_min, scale_max), shear=deg))
+        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (2 - 1) * alpha
+        lower = random.uniform(scale_min, scale_max)
+        upper = random.uniform(lower, scale_max)
+        scale_range = (lower, upper)
+        deg = alpha*90
+        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=scale_range, shear=deg))
 
     # 2) Color transforms (PIL)
     if aug_array[6]:
@@ -502,8 +504,11 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
     transformations.append(Transforms.ToTensor())
     if aug_array[3]:
         alpha = aug_array[3]
-        scale_min, scale_max = 1/(1 + (img_dims[0] * alpha)), 1 + (img_dims[0] * alpha)
-        transformations.append(ScaleJitter(target_size=img_dims, scale_range=(scale_min, scale_max), interpolation='bilinear'))
+        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (2 - 1) * alpha
+        lower = random.uniform(scale_min, scale_max)
+        upper = random.uniform(lower, scale_max)
+        scale_range = (lower, upper)
+        transformations.append(ScaleJitter(target_size=img_dims, scale_range=scale_range, interpolation='bilinear'))
     
     if aug_array[5]:
         normalize = Transforms.Normalize(mean=mean, std=std)

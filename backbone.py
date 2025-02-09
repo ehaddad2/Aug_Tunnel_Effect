@@ -143,7 +143,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
     train_loader = pl.MpDeviceLoader(
         train_loader, 
         device,
-        loader_prefetch_size=128,
+        loader_prefetch_size=512,
         device_prefetch_size=2,
         host_to_device_transfer_threads=8)
     test_loader = pl.MpDeviceLoader(

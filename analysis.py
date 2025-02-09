@@ -221,7 +221,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     test_T = Augmentations.get_transformations(mean, std, aug_array=[0]*14, verbose="Backbone Test")
     if not sum(aug_policy):
         train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug, verbose="Backbone Train")
-        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2], verbose=True)
+        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2])
     else:
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED, verbose=True)
         policies = []
