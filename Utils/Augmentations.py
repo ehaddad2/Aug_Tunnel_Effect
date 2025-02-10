@@ -445,6 +445,10 @@ def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0):
     return tempered_loss
     
 
+def make_odd(x):
+    x = max(1, int(x))
+    return x if x % 2 == 1 else x + 1
+
 def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None): 
     transformations,cutmix_b, mixup_a = [], 0, 0
 
@@ -491,7 +495,7 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
     if aug_array[4]:
         alpha = aug_array[4]
         kernel_min = 1
-        kernel_max = 0 + int(alpha*img_dims[0]+1)
+        kernel_max = make_odd(alpha * img_dims[0] + 1)
         sigma_min = 0.1
         sigma_max = (123.68 + 116.28 + 103.53)/6
         delta = (sigma_max-sigma_min)*alpha
