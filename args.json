@@ -7,7 +7,7 @@
     "backbone_aug_policy_setting": [0,0,0],
     "backbone_lr": 0.01,
     "backbone_batch_size": 512,
-    "backbone_epochs": 100,
+    "backbone_epochs": 20,
     "backbone_label_smoothing": 0.1,
     "backbone_cuda_devices": [0,1],
     "backbone_t1Max": 1,
