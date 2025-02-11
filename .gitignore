@@ -4,3 +4,4 @@ __pycache__/
 wandb
 args
 ws.py
+ImageNet-100

@@ -206,10 +206,8 @@ def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
         train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
     else: 
-        dataset = torchvision.datasets.ImageFolder(base_pth+dataset_name)
-        lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
-        num_classes = len(dataset.classes)
-        train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
+        train, test = torchvision.datasets.ImageFolder(base_pth+dataset_name+'/train/'), torchvision.datasets.ImageFolder(base_pth+dataset_name+'/val/')
+        num_classes = len(train.classes)
         train,test = Augmentations.custom(train, train_T, num_classes, cutmix_alpha, mixup_alpha), Augmentations.custom(test, test_T, num_classes)
 
     if verbose: print('\ntrain length: ', len(train), 'test length: ', len(test), '\n')

@@ -102,7 +102,7 @@ if __name__ == '__main__':
             name=args.run_name,
             config=vars(args))
     
-    analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, aug_policy=args.backbone_aug_policy_setting, filename="./figures/sampled_images.jpg")
+    visualized_fig = analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, aug_policy=args.backbone_aug_policy_setting, filename="./figures/sampled_images.jpg")
 
     """
     -----------------|
@@ -172,6 +172,8 @@ if __name__ == '__main__':
         backbone_results = backbone_ret[0]
         
         if args.use_wandb and backbone_results:
+            if visualized_fig:
+                wandb.log({"dataset_samples": wandb.Image(visualized_fig)})
             backbone_accuracy_data = [
                 [epoch + 1, value, series]
                 for epoch, (train_acc, test_acc) in enumerate(zip(backbone_results['train_acc'], backbone_results['test_acc']))

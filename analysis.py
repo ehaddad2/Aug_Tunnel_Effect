@@ -218,12 +218,12 @@ if __name__ == '__main__':
 
 def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples=5, filename="sampled_images.jpg"):
     mean, std = Augmentations.get_mean_std(dataset_name)
-    test_T = Augmentations.get_transformations(mean, std, aug_array=[0]*14, verbose="Backbone Test")
+    test_T = Augmentations.get_transformations(mean, std, aug_array=[0]*14)
     if not sum(aug_policy):
         train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug, verbose="Backbone Train")
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2])
     else:
-        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED, verbose=True)
+        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED)
         policies = []
         if aug_policy[0]:
             policies.append('swav')
@@ -235,7 +235,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
             policies.append('dino')
             train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], policies=policies)
 
-    _, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
+    fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
     mean, std = Augmentations.get_mean_std(dataset_name)
     mean, std = torch.tensor(mean).view(3, 1, 1), torch.tensor(std).view(3, 1, 1)
 
@@ -268,7 +268,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     
     plt.tight_layout()
     plt.savefig(filename, bbox_inches='tight')
-    plt.close()
+    return fig
 
 
 def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies, img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc):
@@ -291,7 +291,7 @@ def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, au
         df = pd.DataFrame([row], columns=columns)
 
     df.index = [x for x in range(1, len(df.values)+1)]
-    df.to_csv(save_pth)
+    df.to_csv(save_pth, index=False)
 
 
 def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies,
