@@ -84,20 +84,16 @@ def mixup(X, y, alpha, device):
     return mixed_X, y_a, y_b, lam
     
 def cutmix(X, y, alpha, device):
-    print('started cutmix')
     index = torch.randperm(X.size(0)).to(device)
     lam = np.random.beta(alpha, alpha)
     y_a, y_b = y, y[index]
     bbx1, bby1, bbx2, bby2 = rand_bbox(X.size(), lam)
     X[:, :, bbx1:bbx2, bby1:bby2] = X[index, :, bbx1:bbx2, bby1:bby2]
     lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (X.size(2) * X.size(3)))
-    print('finished cutmix')
     return X, y_a, y_b, lam
 
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    print('started loss')
     loss = lam * criterion(pred, y_a) + (1. - lam) * criterion(pred, y_b)
-    print('finished loss')
     return loss
 
 def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0): #from https://arxiv.org/pdf/2009.04659 
