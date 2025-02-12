@@ -3,11 +3,11 @@
     "backbone_dataset_name": "imagenet-100",
     "backbone_architecture": "resnet18",
     "backbone_pth": "./models/Backbones/resnet18/imagenet-100/aug:test.pth",
-    "backbone_man_aug_setting": [0,0.3,0,0,0,0,0,0,0,0,0,0,0,0],
+    "backbone_man_aug_setting": [0,0,0,0,0,0,0,0,0,0,0,0,0,0],
     "backbone_aug_policy_setting": [0,0,0],
     "backbone_lr": 0.01,
     "backbone_batch_size": 512,
-    "backbone_epochs": 20,
+    "backbone_epochs": 100,
     "backbone_label_smoothing": 0.1,
     "backbone_cuda_devices": [0,1],
     "backbone_t1Max": 1,
@@ -28,5 +28,5 @@
     "run_ID": "",
     "run_ID_version": "a",
     "img_dims": 224,
-    "loader_workers": 20
+    "loader_workers": 16
 }

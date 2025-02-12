@@ -111,7 +111,7 @@ if __name__ == '__main__':
     """
     backbone_results = None
     probe_layers = Models.get_all_probe_layer_names(args.backbone_architecture) if (args.probe_layers and str.lower(args.probe_layers[0]) == 'all') else args.probe_layers
-    if not Path.exists(Path(args.backbone_pth)):
+    if not Path.exists(Path(args.backbone_pth)) or 'test' in args.backbone_dataset_base_pth:
         manager = Manager()
         backbone_ret = manager.dict()
         

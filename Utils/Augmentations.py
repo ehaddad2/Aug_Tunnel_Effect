@@ -84,18 +84,21 @@ def mixup(X, y, alpha, device):
     return mixed_X, y_a, y_b, lam
     
 def cutmix(X, y, alpha, device):
-    rand_index = torch.randperm(X.size(0)).to(device)
+    print('started cutmix')
+    index = torch.randperm(X.size(0)).to(device)
     lam = np.random.beta(alpha, alpha)
-    labels_a = y
-    labels_b = y[rand_index]
+    y_a, y_b = y, y[index]
     bbx1, bby1, bbx2, bby2 = rand_bbox(X.size(), lam)
-    mixed_X = X.clone()
-    mixed_X[:, :, bbx1:bbx2, bby1:bby2] = X[rand_index, :, bbx1:bbx2, bby1:bby2]
+    X[:, :, bbx1:bbx2, bby1:bby2] = X[index, :, bbx1:bbx2, bby1:bby2]
     lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (X.size(2) * X.size(3)))
-    return mixed_X, labels_a, labels_b, lam
+    print('finished cutmix')
+    return X, y_a, y_b, lam
 
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+    print('started loss')
+    loss = lam * criterion(pred, y_a) + (1. - lam) * criterion(pred, y_b)
+    print('finished loss')
+    return loss
 
 def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0): #from https://arxiv.org/pdf/2009.04659 
     y_rebalanced = torch.nn.functional.one_hot(y_rebalanced.long(), num_classes=num_classes).float()
@@ -454,7 +457,7 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
 
     if aug_array[1]: #TODO: scale and ratio fixed
         alpha = aug_array[1]
-        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (3 - 1) * alpha
+        scale_min, scale_max = 1 - (1 - 0.05) * alpha, 1.0
         transformations.append(Transforms.RandomResizedCrop(size=img_dims[0], scale=(scale_min, scale_max)))
 
     if aug_array[2]:
@@ -529,7 +532,7 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         n_holes = int(cutout_area/(length**2))
         transformations.append(Cutout(n_holes, length))
     
-    transformations.append(PadToSize(out_H=img_dims[0], out_W=img_dims[1]))
+    #transformations.append(PadToSize(out_H=img_dims[0], out_W=img_dims[1]))
     transformations.append(Transforms.Normalize(mean=mean, std=std))
     ret = Transforms.Compose(transformations)
     if verbose: print(f'{verbose} Manual Augmentations: {ret}\nCutmix α: {cutmix_a}\nMixup α: {mixup_a}\n')
