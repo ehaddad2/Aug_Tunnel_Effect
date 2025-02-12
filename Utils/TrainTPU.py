@@ -9,9 +9,9 @@ from typing import Dict, List, Tuple
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import numpy as np
-from Utils import Augmentations
 import random
 import torch_xla.debug.profiler as xp
+from Utils import Augmentations as Augs
 
 SEED = 30
 torch.manual_seed(SEED)
@@ -36,16 +36,34 @@ def train_step(model, dataloader, ep, loss_fn, optimizer, device: torch.device) 
     model.train()
     acc, loss, ep_acc, ep_loss, N = 0, 0, 0, 0, 0
     rank = xm.get_ordinal()
+    n_classes, mixup_a, cutmix_a = dataloader._loader.dataset.num_classes, dataloader._loader.dataset.mixup_alpha, dataloader._loader.dataset.cutmix_alpha
     if xm.is_master_ordinal(): pbar = tqdm(total=len(dataloader), desc=f'Training Epoch {ep}')
 
     for batch_idx, (X, y) in enumerate(dataloader):
         optimizer.zero_grad()
-        X = X.to(device)
-        y = y.to(device)
+        X, y = X.to(device), y.to(device)
+        
+        if cutmix_a > 0: #perform cutmix
+            X_cm, y_1, y_2, lam = Augs.cutmix(X, y, cutmix_a, device)
+            outputs = model(X_cm)
+            loss = Augs.mixup_criterion(pred=outputs, y_a=y_1, y_b=y_2, lam=lam, criterion=loss_fn)
 
-        outputs = model(X)
+        elif mixup_a > 0: #perform mixup
+            X_m, y_1, y_2, lam = Augs.mixup(X, y, mixup_a, device)
+            outputs = model(X_m)
+            loss = Augs.mixup_criterion(pred=outputs, y_a=y_1, y_b=y_2, lam=lam, criterion=loss_fn)
+
+        elif (mixup_a > 0) and (cutmix_a > 0): #perform both
+            X_m, y_1, y_2, lam = Augs.mixup(X, y, mixup_a, device)
+            X_cm, y_c1, y_c2, lam = Augs.cutmix(X_m, y_1, cutmix_a, device)
+            outputs = model(X_cm)
+            loss = Augs.mixup_criterion(pred=outputs, y_a=y_c1, y_b=y_c2, lam=lam, criterion=loss_fn)
+
+        else:
+            outputs = model(X)
+            loss = loss_fn(outputs, y)
+
         pred = outputs.argmax(dim=1)
-        loss = loss_fn(outputs, y)
         ep_loss += loss.item()
         loss.backward()
         xm.optimizer_step(optimizer)
@@ -96,7 +114,7 @@ def test_step(model: nn.Module, dataloader: DataLoader, ep: int, loss_fn: nn.Mod
     return float(ep_acc), ep_loss
 
 def train(model, train_dataloader, test_dataloader, train_sampler, optimizer, loss_fn, epochs: int, device: torch.device, 
-          warmup_epochs: int = 0, CosAnnealing=False) -> Dict[str, List]:
+          warmup_epochs: int = 0, CosAnnealing=False, cutmix_a=0, mixup_a=0) -> Dict[str, List]:
     results = {
         "train_loss": [], "train_acc": [],
         "test_loss": [], "test_acc": [],

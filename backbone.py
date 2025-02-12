@@ -52,7 +52,9 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, architecture
         epochs,
         device,
         warmup_epochs,
-        use_cos_annealing)
+        use_cos_annealing,
+        cutmix_a=train_dataset.mixup_alpha,
+        mixup_a=train_dataset.cutmix_alpha)
     
     Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), backbone_pth)
@@ -90,7 +92,9 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         epochs, 
         rank, 
         warmup_epochs,
-        use_cos_annealing)
+        use_cos_annealing,
+        cutmix_a=train_dataset.mixup_alpha,
+        mixup_a=train_dataset.cutmix_alpha)
 
     if rank == 0:
         Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
@@ -166,7 +170,9 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         epochs,
         device,
         warmup_epochs=warmup_epochs,
-        CosAnnealing=use_cos_annealing)
+        CosAnnealing=use_cos_annealing,
+        cutmix_a=train_dataset.mixup_alpha,
+        mixup_a=train_dataset.cutmix_alpha)
 
     if xm.is_master_ordinal():
         Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
@@ -174,6 +180,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         ret[0] = train_res
 
     xm.rendezvous('training_finished')
+
 
 """
 -----------------|
@@ -191,15 +198,15 @@ def prep_data(dataset_name, img_dims, man_aug_setting, policy_aug_setting, datas
         train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, train_T, test_T, cutmix_alpha=cutmix_a, mixup_alpha=mixup_a, seed=SEED, verbose=verbose)
     else:
         train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, test_T, test_T, seed=SEED, verbose=verbose)
-        policies = []
+        polices = []
         if policy_aug_setting[0]:
-            policies.append('swav')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 96], [2, 6], policies=policies)
+            polices.append('swav')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 96], [2, 6], polices=polices)
         if policy_aug_setting[1]:
-            policies.append('barlow')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224], [1, 1], policies=policies)
+            polices.append('barlow')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224], [1, 1], polices=polices)
         if policy_aug_setting[2]:
-            policies.append('dino')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], policies=policies)
+            polices.append('dino')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], polices=polices)
     
     return train_dataset, test_dataset, num_classes

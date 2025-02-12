@@ -224,16 +224,16 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2])
     else:
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED)
-        policies = []
+        polices = []
         if aug_policy[0]:
-            policies.append('swav')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 96], [2, 6], policies=policies)
+            polices.append('swav')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 96], [2, 6], polices=polices)
         if aug_policy[1]:
-            policies.append('barlow')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224], [1, 1], policies=policies)
+            polices.append('barlow')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224], [1, 1], polices=polices)
         if aug_policy[2]:
-            policies.append('dino')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], policies=policies)
+            polices.append('dino')
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], polices=polices)
 
     fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
     mean, std = Augmentations.get_mean_std(dataset_name)

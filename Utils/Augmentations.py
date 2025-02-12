@@ -68,44 +68,60 @@ class ManualAugDataset(Dataset):
     def __getitem__(self, index):
         x1, y1 = self.dataset[index]
         if self.transform: x1 = self.transform(x1)
-        if not self.mixup_alpha and not self.cutmix_alpha: return x1,y1
-        index2 = random.randint(0, len(self.dataset) - 1)
-        x2, y2 = self.dataset[index2]
-        if self.transform: x2 = self.transform(x2)
+        return x1,y1
 
-        #apply cutmix and mixup if needed
-        if self.mixup_alpha and not self.cutmix_alpha: return self.apply_mixup(x1, y1, x2, y2)
-        elif not self.mixup_alpha and self.cutmix_alpha: return self.apply_cutmix(x1, y1, x2, y2)
-        elif self.mixup_alpha and self.cutmix_alpha: 
-            X_m, _ = self.apply_mixup(x1, y1, x2, y2)
-            X_c, _ = self.apply_cutmix(X_m, y1, x2, y2)
-            return X_c, y1
+#should only be called with batched data
+def mixup(X, y, alpha, device):
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1 
 
-    def apply_mixup(self, x1, y1, x2, y2): #from https://github.com/facebookresearch/mixup-cifar10/blob/main/train.py
-        lam = torch.distributions.Beta(self.mixup_alpha, self.mixup_alpha).sample().item()
-        mixed_x = lam * x1 + (1 - lam) * x2
-        return mixed_x, y1
+    batch_size = X.size(0)
+    index = torch.randperm(batch_size).to(device)
+    mixed_X = lam * X + (1 - lam) * X[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_X, y_a, y_b, lam
+    
+def cutmix(X, y, alpha, device):
+    rand_index = torch.randperm(X.size(0)).to(device)
+    lam = np.random.beta(alpha, alpha)
+    labels_a = y
+    labels_b = y[rand_index]
+    bbx1, bby1, bbx2, bby2 = rand_bbox(X.size(), lam)
+    mixed_X = X.clone()
+    mixed_X[:, :, bbx1:bbx2, bby1:bby2] = X[rand_index, :, bbx1:bbx2, bby1:bby2]
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (X.size(2) * X.size(3)))
+    return mixed_X, labels_a, labels_b, lam
 
-    def apply_cutmix(self, x1, y1, x2, y2): #based on https://github.com/clovaai/CutMix-PyTorch/blob/master/train.py
-        lam = torch.distributions.Beta(self.cutmix_alpha, self.cutmix_alpha).sample().item()
-        _, H, W = x1.shape
-        bbx1, bby1, bbx2, bby2 = self.rand_bbox(H, W, lam)
-        mixed_x = x1.clone()
-        mixed_x[:, bbx1:bbx2, bby1:bby2] = x2[:, bbx1:bbx2, bby1:bby2]
-        lam_adjusted = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (H * W))
-        return mixed_x, y1
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
-    def rand_bbox(self, H, W, lam):
-        cut_rat = math.sqrt(1. - lam)
-        cut_w = int(W * cut_rat)
-        cut_h = int(H * cut_rat)
-        cx = random.randint(0, W)
-        cy = random.randint(0, H)
-        bbx1 = max(cx - cut_w // 2, 0)
-        bby1 = max(cy - cut_h // 2, 0)
-        bbx2 = min(cx + cut_w // 2, W)
-        bby2 = min(cy + cut_h // 2, H)
-        return bbx1, bby1, bbx2, bby2
+def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0): #from https://arxiv.org/pdf/2009.04659 
+    y_rebalanced = torch.nn.functional.one_hot(y_rebalanced.long(), num_classes=num_classes).float()
+    log_probs = torch.nn.functional.log_softmax(pred, dim=1)
+    lam_adjusted = abs(2 * lam - 1)
+    loss_confidence = -lam_adjusted * torch.sum(y_rebalanced * log_probs, dim=1)
+    loss_entropy = -(1 - lam_adjusted) / num_classes * torch.sum(log_probs, dim=1)
+    tempered_loss = loss_confidence.mean() + zeta * loss_entropy.mean()
+    return tempered_loss
+
+def rand_bbox(size, lam):
+    H, W = size[2], size[3]
+    cut_rat = math.sqrt(1. - lam)
+    cut_w, cut_h = int(W * cut_rat), int(H * cut_rat)
+    
+    # Center coordinates
+    cx = random.randint(0, W)
+    cy = random.randint(0, H)
+    
+    # Bounding box coordinates
+    bbx1 = max(cx - cut_w//2, 0)
+    bby1 = max(cy - cut_h//2, 0)
+    bbx2 = min(cx + cut_w//2, W)
+    bby2 = min(cy + cut_h//2, H)
+    
+    return bbx1, bby1, bbx2, bby2
 
 class PadToSize(object):
     def __init__(self, out_H=224, out_W=224):
@@ -169,6 +185,7 @@ class RandomApply(nn.Module): #from: https://arxiv.org/pdf/2006.07733
         if random.random() > self.p:
             return x
         return self.fn(x)
+    
 class GaussianNoise:
     def __init__(self, mean=0.0, std=0.1):
         self.mean = mean
@@ -177,22 +194,6 @@ class GaussianNoise:
     def __call__(self, tensor):
         noise = torch.randn(tensor.size()) * self.std + self.mean
         return (tensor + noise).clamp(0,1)
-
-class PILRandomGaussianBlur(object):
-    """
-    Apply Gaussian Blur to the PIL image. Take the radius and probability of
-    application as the parameter.
-    This transform was used in SimCLR - https://arxiv.org/abs/2002.05709
-    """
-    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.):
-        self.prob = p
-        self.radius_min = radius_min
-        self.radius_max = radius_max
-
-    def __call__(self, img):
-        do_it = np.random.rand() <= self.prob
-        if not do_it: return img
-        return img.filter(ImageFilter.GaussianBlur(radius=random.uniform(self.radius_min, self.radius_max)))
     
 def get_mean_std(dataset_name:str):
     mean,std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.255] #defaults
@@ -238,7 +239,7 @@ class MultiCropDataset(torch.utils.data.Dataset):
         self.return_index = return_index
         self.num_transforms = sum(nmb_crops) * len(polices)
 
-        color_transform = [color_distortion(), PILRandomGaussianBlur()]
+        color_transform = [color_distortion(), TransformsV2.GaussianBlur(kernel_size=(0.1*2, 2.0*2))]
         mean = [0.485, 0.456, 0.406]
         std = [0.228, 0.224, 0.225]
         trans = []
@@ -436,14 +437,6 @@ class Cutout(object):
 
         return img
 
-def tempered_mixup_criterion(pred, y_rebalanced, lam, num_classes=10, zeta=1.0): #from https://arxiv.org/pdf/2009.04659 
-    log_probs = torch.nn.functional.log_softmax(pred, dim=1)
-    lam_adjusted = abs(2 * lam - 1)
-    loss_confidence = -lam_adjusted * torch.sum(y_rebalanced * log_probs, dim=1)
-    loss_entropy = -(1 - lam_adjusted) / num_classes * torch.sum(log_probs, dim=1)
-    tempered_loss = loss_confidence.mean() + zeta * loss_entropy.mean()
-    return tempered_loss
-    
 
 def make_odd(x):
     x = max(1, int(x))
@@ -460,15 +453,14 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         transformations.append(Transforms.RandomHorizontalFlip(p=aug_array[0]))
 
     if aug_array[1]: #TODO: scale and ratio fixed
-        max_w, max_h, strength = img_dims[0], img_dims[1], aug_array[1]
-        max_area = max_w*max_h
-        crop_dim = int(math.sqrt(max_area*(1-strength+0.0001)))
-        transformations.append(Transforms.RandomResizedCrop(size=crop_dim))
+        alpha = aug_array[1]
+        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (3 - 1) * alpha
+        transformations.append(Transforms.RandomResizedCrop(size=img_dims[0], scale=(scale_min, scale_max)))
 
     if aug_array[2]:
         alpha = aug_array[2] #distribute weight evenly among param
         deg_min,deg_max = alpha*(-180), alpha*180
-        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (2 - 1) * alpha
+        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (3 - 1) * alpha
         lower = random.uniform(scale_min, scale_max)
         upper = random.uniform(lower, scale_max)
         scale_range = (lower, upper)
@@ -499,7 +491,6 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         sigma_min = 0.1
         sigma_max = (123.68 + 116.28 + 103.53)/6
         delta = (sigma_max-sigma_min)*alpha
-        sigma = random.uniform(sigma_min, sigma_min + delta)
         transformations.append(TransformsV2.GaussianBlur(kernel_size=(kernel_min, kernel_max), sigma=(sigma_min, sigma_max)))
 
     mixup_a = aug_array[12]
@@ -508,7 +499,7 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
     transformations.append(Transforms.ToTensor())
     if aug_array[3]:
         alpha = aug_array[3]
-        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (2 - 1) * alpha
+        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (3 - 1) * alpha
         lower = random.uniform(scale_min, scale_max)
         upper = random.uniform(lower, scale_max)
         scale_range = (lower, upper)
