@@ -457,18 +457,15 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
 
     if aug_array[1]: #TODO: scale and ratio fixed
         alpha = aug_array[1]
-        scale_min, scale_max = 1 - (1 - 0.05) * alpha, 1.0
+        scale_min, scale_max = 1/(1+(19-1)*alpha), 1 + (4 - 1) * alpha
         transformations.append(Transforms.RandomResizedCrop(size=img_dims[0], scale=(scale_min, scale_max)))
 
     if aug_array[2]:
         alpha = aug_array[2] #distribute weight evenly among param
-        deg_min,deg_max = alpha*(-180), alpha*180
-        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (3 - 1) * alpha
-        lower = random.uniform(scale_min, scale_max)
-        upper = random.uniform(lower, scale_max)
-        scale_range = (lower, upper)
+        deg_min,deg_max = alpha*(-90), alpha*90
+        scale_min, scale_max = 1/(1+(19-1)*alpha), 1 + (4 - 1) * alpha
         deg = alpha*90
-        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(alpha, alpha), scale=scale_range, shear=deg))
+        transformations.append(Transforms.RandomAffine(degrees=(deg_min, deg_max), translate=(0.5*alpha, 0.5*alpha), scale=(scale_min, scale_max), shear=deg))
 
     # 2) Color transforms (PIL)
     if aug_array[6]:
@@ -491,38 +488,24 @@ def get_transformations(mean, std, aug_array, img_dims = (224,224), verbose=None
         alpha = aug_array[4]
         kernel_min = 1
         kernel_max = make_odd(alpha * img_dims[0] + 1)
-        sigma_min = 0.1
-        sigma_max = (123.68 + 116.28 + 103.53)/6
-        delta = (sigma_max-sigma_min)*alpha
+        sigma_min = 1/(1+(19-1)*alpha) #centered around sig_min=0.1, sig_max=2
+        sigma_max = 1 + (4 - 1) * alpha
         transformations.append(TransformsV2.GaussianBlur(kernel_size=(kernel_min, kernel_max), sigma=(sigma_min, sigma_max)))
 
     mixup_a = aug_array[12]
     cutmix_a = aug_array[13]
 
     transformations.append(Transforms.ToTensor())
-    if aug_array[3]:
+    if aug_array[3]: 
         alpha = aug_array[3]
-        scale_min, scale_max = 0.1 + (1 - 0.1) * alpha, 1 + (3 - 1) * alpha
-        lower = random.uniform(scale_min, scale_max)
-        upper = random.uniform(lower, scale_max)
-        scale_range = (lower, upper)
-        transformations.append(ScaleJitter(target_size=img_dims, scale_range=scale_range, interpolation='bilinear'))
+        scale_min, scale_max = 1/(1+(19-1)*alpha), 1 + (4 - 1) * alpha #centered around abs_min=1/10 and abs_max=2
+        transformations.append(ScaleJitter(target_size=img_dims, scale_range=(scale_min, scale_max), interpolation='bilinear'))
     
-    if aug_array[5]:
+    if aug_array[5]: #centered around sigma= 0.1
         normalize = Transforms.Normalize(mean=mean, std=std)
         denormalize = Transforms.Normalize(mean=[-m / s for m, s in zip(mean, std)], std=[1 / s for s in std])
         alpha = aug_array[5]
-        random_sign = random.choice([-1, 1])
-        mu_upper_bound, sigma_upper_bound = 2*0.229, 3*0.229
-        mu_offset = mu_upper_bound * alpha * random_sign
-        sigma_offset = sigma_upper_bound * alpha * random_sign
-
-        if random_sign==-1:
-            sigma_offset = -0.229*alpha
-        else: sigma_offset = ((3*0.229) - 0.229)*alpha
-        transformations.append(normalize)
-        transformations.append(GaussianNoise(mean=0.45+mu_offset, std=0.229+sigma_offset))
-        transformations.append(denormalize)
+        transformations.append(TransformsV2.GaussianNoise(sigma=0.2*alpha))
 
     if aug_array[11]: 
         alpha = aug_array[11]
