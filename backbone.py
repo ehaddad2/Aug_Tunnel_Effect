@@ -142,7 +142,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         shuffle=False,
         num_workers=num_workers,
         persistent_workers=True,
-        prefetch_factor=32)
+        prefetch_factor=4)
 
     train_loader = pl.MpDeviceLoader(
         train_loader, 
@@ -153,9 +153,9 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
     test_loader = pl.MpDeviceLoader(
         test_loader, 
         device,
-        loader_prefetch_size=128,
+        loader_prefetch_size=64,
         device_prefetch_size=1,
-        host_to_device_transfer_threads=4)
+        host_to_device_transfer_threads=2)
 
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
