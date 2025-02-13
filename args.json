@@ -3,7 +3,7 @@
     "backbone_dataset_name": "imagenet-100",
     "backbone_architecture": "resnet18",
     "backbone_pth": "./models/Backbones/resnet18/imagenet-100/aug:test.pth",
-    "backbone_man_aug_setting": [0.7,0.7,0.7,0.7,0.7,0.7,0.7,0.7,0.7,0.7,0.7,0,0.7,0],
+    "backbone_man_aug_setting": [0.3,0,0.3,0,0.3,0.3,0.3,0.3,0.3,0.3,0.3,0,0.3,0],
     "backbone_aug_policy_setting": [0,0,0],
     "backbone_lr": 0.01,
     "backbone_batch_size": 512,
