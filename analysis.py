@@ -281,16 +281,11 @@ def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, au
     
     if save_pth.exists():
         df = pd.read_csv(save_pth)
-        if "Run ID" not in df.columns: df.insert(0, "Run ID", pd.NA)
-        if run_id in df["Run ID"].dropna().values:
-            df.loc[df["Run ID"] == run_id] = row
-        else:
-            new_row = pd.DataFrame([row], columns=columns)
-            df = pd.concat([df, new_row], ignore_index=True)
+        new_row = pd.DataFrame([row], columns=columns)
+        df = pd.concat([df, new_row], ignore_index=True)
     else:
         df = pd.DataFrame([row], columns=columns)
 
-    df.index = [x for x in range(1, len(df.values)+1)]
     df.to_csv(save_pth, index=False)
 
 
