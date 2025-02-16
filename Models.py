@@ -3,7 +3,9 @@ from torchvision.models.resnet import ResNet, BasicBlock
 import torch.nn as nn
 import torchvision
 import collections
-
+from functools import partial
+from timm.models.vision_transformer import VisionTransformer, _cfg
+from timm.models.layers import trunc_normal_
 class Models:
     def __init__(self):
         self.model_architectures = {
@@ -12,6 +14,8 @@ class Models:
             "vgg13": self.vgg13,
             "vgg19": self.vgg19,
             'lp1': self.lp1,
+            'vit_tiny': self.vit_tiny,
+            'vit_tiny_plus': self.vit_tiny_plus
         }
         
     def resnet10(self, num_classes):
@@ -39,6 +43,35 @@ class Models:
         layer_setup = [64, 64, "M", 128, 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"]
         return VGG(cfg=layer_setup, class_num=num_classes)
     
+    def vit_tiny(self, num_classes):
+        """Initialize ViT-Tiny architecture (depth=12)."""
+        model = VisionTransformer(
+            patch_size=8, 
+            embed_dim=192, 
+            depth=12, 
+            num_heads=3, 
+            mlp_ratio=4, 
+            qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6),
+            num_classes=num_classes
+        )
+        model.default_cfg = _cfg()
+        return model
+
+    def vit_tiny_plus(self, num_classes):
+        """Initialize ViT-Tiny+ architecture (depth=18)."""
+        model = VisionTransformer(
+            patch_size=8, 
+            embed_dim=192, 
+            depth=18, 
+            num_heads=3, 
+            mlp_ratio=4, 
+            qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6),
+            num_classes=num_classes
+        )
+        model.default_cfg = _cfg()
+        return model
     def lp1(self, backbone:nn.Module, img_dims, probe_layer:str, probe_out): #performs 1x1 adaptive avg pooling then attaches linear head after probe_layer
         layers = collections.OrderedDict()
         for name, layer in backbone.named_children():
@@ -82,6 +115,9 @@ def get_all_probe_layer_names(model_name):
         return [name for name, module in mock_model.named_modules() if 'conv' in name]
     elif 'vgg' in model_name:
         return [f"features.{i}" for i, module in enumerate(mock_model.features) if isinstance(module, nn.Conv2d)]
+    elif 'vit' in model_name:
+        return [f"blocks.{i}" for i in range(mock_model.depth)]
+
 
 class ResNet10(ResNet):
     def __init__(self, num_classes=1000):

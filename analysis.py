@@ -220,7 +220,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     mean, std = Augmentations.get_mean_std(dataset_name)
     test_T = Augmentations.get_transformations(mean, std, aug_array=[0]*14)
     if not sum(aug_policy):
-        train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug, verbose="Backbone Train")
+        train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug)
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2])
     else:
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED)
@@ -271,11 +271,11 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     return fig
 
 
-def summarize_backbone_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies, img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc):
+def summarize_backbone_experiments(run_name, save_pth, backbone_arch, man_augs, aug_policies, img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc):
     #arch_type = "CNN" if str.lower(backbone_arch) in ['resnet', 'vgg'] else "ViT"
     
-    row = [run_id, backbone_arch] + man_augs + aug_policies + [img_dim, id_class_cnt, backbone_acc]
-    columns = (["Run ID", "Backbone Architecture"] 
+    row = [run_name, backbone_arch] + man_augs + aug_policies + [img_dim, id_class_cnt, backbone_acc]
+    columns = (["Run Name", "Backbone Architecture"] 
                + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))] 
                + ["img_dim", "ID Class Count", "Backbone Top-1 Accuracy"])
     

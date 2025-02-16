@@ -214,7 +214,7 @@ if __name__ == '__main__':
         id_class_count = int(m.group()) if m else None
         overparam_lvl = analysis.compute_overparam_val(args.backbone_architecture, args.backbone_dataset_base_pth, args.backbone_dataset_name)
 
-        analysis.summarize_backbone_experiments(run_id, csv_path, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting,
+        analysis.summarize_backbone_experiments(args.run_name, csv_path, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting,
                                                 args.img_dims, id_class_count, overparam_lvl, len(probe_layers), backbone_acc)
     else: 
         print(f"Backbone {args.backbone_pth} found, probing with this.")
