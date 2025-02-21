@@ -289,29 +289,16 @@ def summarize_backbone_experiments(run_name, save_pth, backbone_arch, man_augs, 
     df.to_csv(save_pth, index=False)
 
 
-def summarize_probe_experiments(run_id, save_pth, backbone_arch, man_augs, aug_policies,
+def summarize_probe_experiments(backbone_run_name, save_pth, backbone_arch, man_augs, aug_policies,
                                 img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc, probe_arch, r, rho, A):
     
-    row = [run_id, r, rho, A] + man_augs + aug_policies
-    columns = ["Run ID", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
+    row = [backbone_run_name, r, rho, A] + man_augs + aug_policies 
+    columns = ["Backbone Run Name", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
 
-    """
-    row = [run_id, stem, backbone_arch] + man_augs + aug_policies + [img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc, probe_arch, r, rho, A]
-    columns_probe = (["Run ID", "Stem", "Spatial Reduction", "Backbone Architecture", "CNN vs ViT"] +
-                     [f"manual_aug_{i+1}" for i in range(len(man_augs))] +
-                     [f"aug_policy_{i+1}" for i in range(len(aug_policies))] +
-                     ["img_dim", "ID Class Count", "OverParam. Level", "Depth", "Backbone Top-1 Accuracy", "Probe Architecture", 
-                      "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"])
-
-    """
     if save_pth.exists():
         df = pd.read_csv(save_pth)
-        if "Run ID" not in df.columns: df.insert(0, "Run ID", pd.NA)
-        if run_id in df["Run ID"].dropna().values:
-            df.loc[df["Run ID"] == run_id] = row
-        else:
-            new_row = pd.DataFrame([row], columns=columns)
-            df = pd.concat([df, new_row], ignore_index=True)
+        new_row = pd.DataFrame([row], columns=columns)
+        df = pd.concat([df, new_row], ignore_index=True)
     else:
         df = pd.DataFrame([row], columns=columns)
 
@@ -323,7 +310,6 @@ def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
     mock_model = Models.Models().get_model(backbone_name, n_classes)
     P = sum(p.numel() for p in mock_model.parameters() if p.requires_grad)
     return P/n_samples
-
 
 def compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count):
     id_layer_res = np.array(id_layer_res)

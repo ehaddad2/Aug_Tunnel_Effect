@@ -159,7 +159,7 @@ class HAM10000Dataset(Dataset):
     def __len__(self):
         return len(self.data)
     
-def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha=None, mixup_alpha=None, seed = None, verbose=False): #loads in a dataset with initial transoformations
+def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha=0, mixup_alpha=0, seed = None, verbose=False): #loads in a dataset with initial transoformations
     dataset_name = str.lower(dataset_name)
     train,test,num_classes = None,None,0
 

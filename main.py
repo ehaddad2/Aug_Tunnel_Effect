@@ -227,19 +227,18 @@ if __name__ == '__main__':
     """
     probe_results = {}  # {dataset: [layer1_acc, layer2_acc, ...]}
     probing_datasets = get_probe_dataset_names([args.backbone_dataset_base_pth, args.probe_datasets_base_pth], args.backbone_dataset_name) if (args.probe_datasets and str.lower(args.probe_datasets[0]) == 'all') else args.probe_datasets
+    print(probe_layers)
     manager = Manager()
-    print(f'Probing: {[ds for ds in probing_datasets]}')
     for i in range(len(probing_datasets)):
         probe_results[probing_datasets[i]] = []
         for j in range(len(probe_layers)):
-            full_probe_pth = args.probe_pth + "/" + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(args.backbone_man_aug_setting)  + " aug_policy:" + str(args.backbone_aug_policy_setting) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j]
+            full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting))  + "-aug_policy:" + str(encode_vector(args.backbone_aug_policy_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j]
             #if Path.exists(Path(full_probe_pth)) and not (probing_datasets[i] == args.backbone_dataset_name):
                 #print(f'\nProbed dataset: {probing_datasets[i]}, moving to next...')
                 #continue
-            print(probe_layers)
             print(f'\nProbing dataset: {probing_datasets[i]} at probe layer: {probe_layers[j]}')
-            probe_ret = None
-            
+            probe_ret = None 
+            print(full_probe_pth)
             if device:
                 if (('cpu' in device.type) or ('cuda' in device.type)) and not args.use_ddp:
                     probe_ret = probe.cpu_worker(
@@ -301,7 +300,7 @@ if __name__ == '__main__':
                     args.probe_label_smoothing,
                     args.probe_epochs,
                     args.probe_batch_size,
-                    probe_ret), nprocs=4)
+                    probe_ret), nprocs=None)
 
             if probe_ret: probe_ret = probe_ret[0]
             if args.use_wandb and probe_ret:
@@ -353,8 +352,7 @@ if __name__ == '__main__':
                     args.backbone_dataset_name,
                     probing_datasets[i],
                     backbone_acc,
-                    probe_ret['max_test_acc'],
-                    len(probe_layers) #TODO: FIX
+                    probe_ret['max_test_acc']
                 ])
 
                 df = pd.DataFrame(results, columns=[
@@ -366,8 +364,7 @@ if __name__ == '__main__':
                     "ID Dataset",
                     "OOD Dataset",
                     "Backbone ID max top-1 test acc",
-                    "Probe max top-1 test acc",
-                    "Depth"
+                    "Probe max top-1 test acc"
                 ])  
                 wandb.log({"Run Results": wandb.Table(dataframe=df)})
 
