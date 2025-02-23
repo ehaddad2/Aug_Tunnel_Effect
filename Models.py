@@ -5,7 +5,7 @@ import torchvision
 import collections
 from functools import partial
 from timm.models.vision_transformer import VisionTransformer, _cfg
-from timm.models.layers import trunc_normal_
+
 class Models:
     def __init__(self):
         self.model_architectures = {
