@@ -46,7 +46,7 @@ class Models:
     def vit_tiny(self, num_classes):
         """Initialize ViT-Tiny architecture (depth=12)."""
         model = VisionTransformer(
-            patch_size=8, 
+            patch_size=16, 
             embed_dim=192, 
             depth=12, 
             num_heads=3, 
