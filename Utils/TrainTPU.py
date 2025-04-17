@@ -2,7 +2,6 @@
 Contains functions for training and testing an PyTorch model on TPUs.
 """
 import torch
-import torch_xla.core.xla_model as xm
 from torch import nn, optim
 from tqdm.auto import tqdm
 from typing import Dict, List, Tuple
@@ -10,8 +9,12 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import numpy as np
 import random
-import torch_xla.debug.profiler as xp
 from Utils import Augmentations as Augs
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.debug.profiler as xp
+except ImportError:
+    pass
 
 SEED = 30
 torch.manual_seed(SEED)

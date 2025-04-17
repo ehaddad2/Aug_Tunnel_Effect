@@ -307,7 +307,7 @@ def summarize_probe_experiments(backbone_run_name, save_pth, backbone_arch, man_
 def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
     train,_,n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
     n_samples = len(train)
-    mock_model = Models.Models().get_model(backbone_name, n_classes)
+    mock_model = Models.BackboneModel().get_model(backbone_name, n_classes)
     P = sum(p.numel() for p in mock_model.parameters() if p.requires_grad)
     return P/n_samples
 

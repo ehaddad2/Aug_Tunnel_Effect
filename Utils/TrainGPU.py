@@ -12,6 +12,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch.distributed as dist
 from Utils import Augmentations
 import numpy as np
+import time 
+
 SEED = 30
 def dist_training():
     return dist.is_available() and dist.is_initialized()
@@ -32,105 +34,138 @@ def LW_Scheduler(optimizer, warmup_epochs):
 """
 -----------------------------------------------------------------------------------------------------------------------------------------------
 """
-def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, ep:int, loss_fn: torch.nn.Module, optimizer: torch.optim.Optimizer, device: torch.device) -> Tuple[float, float]:
+def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, ep:int, loss_fn: torch.nn.Module, 
+               optimizer: torch.optim.Optimizer, device: torch.device) -> Tuple[float, float]:
     model.train()
-    train_loss, train_acc = 0, 0
-    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+    acc, loss, ep_acc, ep_loss, N = 0, 0, 0, 0, 0
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    cutmix_a, mixup_a = dataloader.dataset.cutmix_alpha, dataloader.dataset.mixup_alpha
     
-    # Create tensors to accumulate loss and accuracy
-    if torch.distributed.is_initialized():
-        total_loss = torch.tensor(0., device=device)
-        total_acc = torch.tensor(0., device=device)
+    # Initialize timing variables
+    data_loading_time = 0
+    forward_time = 0
+    backward_time = 0
+    optimizer_time = 0
     
-    if rank == 0: pbar=tqdm(total=len(dataloader), desc=f'Training Epoch {ep}')
+    if rank == 0: pbar=tqdm(total=len(dataloader), desc=f'Training Epoch {ep}', leave=True)
     
+    start_time = time.time()
     for batch_idx, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
-        outputs = model(X)
-            
-        loss = loss_fn(outputs, y)
-        predicted = outputs.argmax(dim=1)
+        data_load_end = time.time()
+        data_loading_time += data_load_end - start_time
         
-        acc = (predicted == y).float().mean()
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        batch_loss = loss.item()
-        batch_acc = acc.item()
-        if torch.distributed.is_initialized():
-            total_loss += batch_loss
-            total_acc += batch_acc
+        X, y = X.to(device), y.to(device)
+
+        forward_start = time.time()
+        """Apply cutmix/mixup"""
+        if cutmix_a > 0:
+            X_cm, y_1, y_2, lam = Augmentations.cutmix(X, y, cutmix_a, device)
+            outputs = model(X_cm)
+            loss = Augmentations.mixup_criterion(loss_fn, outputs, y_1, y_2, lam)
+        elif mixup_a > 0:
+            X_m, y_1, y_2, lam = Augmentations.mixup(X, y, mixup_a, device)
+            outputs = model(X_m)
+            loss = Augmentations.mixup_criterion(loss_fn, outputs, y_1, y_2, lam)
+        elif (mixup_a > 0) and (cutmix_a > 0):
+            X_m, y_1, y_2, lam = Augmentations.mixup(X, y, mixup_a, device)
+            X_cm, y_c1, y_c2, lam = Augmentations.cutmix(X_m, y_1, cutmix_a, device)
+            outputs = model(X_cm)
+            loss = Augmentations.mixup_criterion(loss_fn, outputs, y_c1, y_c2, lam)
         else:
-            train_loss += batch_loss
-            train_acc += batch_acc
+            outputs = model(X)
+            loss = loss_fn(outputs, y)
+        
+        forward_end = time.time()
+        forward_time += forward_end - forward_start
+            
+        pred = outputs.argmax(dim=1)
+        ep_loss += loss.item()
+        
+        backward_start = time.time()
+        loss.backward()
+        backward_end = time.time()
+        backward_time += backward_end - backward_start
+        
+        optimizer_start = time.time()
+        optimizer.step()
+        optimizer_end = time.time()
+        optimizer_time += optimizer_end - optimizer_start
+        
+        acc = pred.eq(y.view_as(pred)).sum()
+        ep_acc += acc.item()
+        N += X.size()[0]
         
         if rank == 0:
             pbar.set_postfix({
-                'Train Loss': f'{batch_loss:.4f}',
-                'Train Acc': f'{batch_acc:.4f}'
-            })
+                'Train Loss': f'{loss:.4f}',
+                'Train Accuracy': f'{ep_acc/N:.4f}'})
             pbar.update(1)
+        
+        start_time = time.time()  # Start timing the next data loading
     
-    if torch.distributed.is_initialized():
-        torch.distributed.all_reduce(total_loss, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(total_acc, op=torch.distributed.ReduceOp.SUM)
-        train_loss = total_loss.item() / world_size
-        train_acc = total_acc.item() / world_size
+    if rank == 0: 
+        pbar.close()
+        print(f"Epoch {ep} timing breakdown:")
+        print(f"  Data loading time: {data_loading_time:.3f}s")
+        print(f"  Forward pass time: {forward_time:.3f}s")
+        print(f"  Backward pass time: {backward_time:.3f}s")
+        print(f"  Optimizer step time: {optimizer_time:.3f}s")
+        total_time = data_loading_time + forward_time + backward_time + optimizer_time
+        print(f"  Total measured time: {total_time:.3f}s")
+        print(f"  Data loading: {data_loading_time/total_time*100:.1f}%, Forward: {forward_time/total_time*100:.1f}%, "
+              f"Backward: {backward_time/total_time*100:.1f}%, Optimizer: {optimizer_time/total_time*100:.1f}%")
     
-    if rank == 0: pbar.close()
-    train_loss /= len(dataloader)
-    train_acc /= len(dataloader)
+    ep_loss /= len(dataloader)
+    ep_acc = ep_acc / N * 100
     
-    return train_loss, train_acc
+    return float(ep_acc), ep_loss
+    return float(ep_acc), ep_loss
 
 def test_step(model: nn.Module, dataloader: DataLoader, ep:int, loss_fn: nn.Module, device: torch.device) -> Tuple[float, float]:
     model.eval()
-    test_loss, test_acc = 0, 0
-    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
+    acc, loss, ep_acc, ep_loss, N = 0, 0, 0, 0, 0
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    if rank == 0: pbar=tqdm(total=len(dataloader), desc=f'Testing Epoch {ep}')
-    
-    with torch.inference_mode():
+    if rank==0: pbar = tqdm(total=len(dataloader), desc=f'Testing Epoch {ep}')
+
+    with torch.no_grad():
         for batch_idx, (X, y) in enumerate(dataloader):
-            #if batch_idx == 5: break
-            X, y = X.to(device), y.to(device)
+            X = X.to(device)
+            y = y.to(device)
+            outputs = model(X)
+            pred = outputs.max(1, keepdim=True)[1]
+            loss = loss_fn(outputs, y)
+            ep_loss += loss.item()
+            acc = pred.eq(y.view_as(pred)).sum()
+            ep_acc += acc.item()
+            N += X.size()[0]
             
-            output = model(X)
-            loss = loss_fn(output, y)
-            predicted = output.argmax(dim=1)
-            acc = (predicted == y).float().mean()
-            
-            if torch.distributed.is_initialized():
-                loss_tensor = torch.tensor([loss.item()], device=device)
-                acc_tensor = torch.tensor([acc.item()], device=device)
-                
-                torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
-                torch.distributed.all_reduce(acc_tensor, op=torch.distributed.ReduceOp.SUM)
-                
-                batch_loss = loss_tensor.item() / world_size
-                batch_acc = acc_tensor.item() / world_size
-            else:
-                batch_loss = loss.item()
-                batch_acc = acc.item()
-            test_loss += batch_loss
-            test_acc += batch_acc
-            
-            if rank == 0:
+            if rank==0:
                 pbar.set_postfix({
-                    'Test Loss': f'{test_loss/(batch_idx+1):.4f}',
-                    'Test Acc': f'{test_acc/(batch_idx+1):.4f}'
+                    'Test Loss': f'{loss:.4f}',
+                    'Test Acc': f'{ep_acc/N:.4f}'
                 })
                 pbar.update(1)
-    
-    if rank == 0: pbar.close()
-    test_loss /= len(dataloader)
-    test_acc /= len(dataloader)
-    
-    return test_loss, test_acc
+    if rank==0: pbar.close()
+        
+    ep_acc = 100*ep_acc/N
+    ep_loss = ep_loss/len(dataloader)
 
-def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataLoader,  optimizer: Optimizer, loss_fn: nn.Module, epochs: int, device: torch.device, warmup_epochs: int = 0, CosAnnealing=False) -> Dict[str, List]:
+    if torch.distributed.is_initialized(): #accum results across devices
+        acc_tensor = torch.tensor([ep_acc], device=device)
+        loss_tensor = torch.tensor([ep_loss], device=device)
+
+        torch.distributed.all_reduce(acc_tensor, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.SUM)
+        
+        world_size = torch.distributed.get_world_size()
+        ep_acc = acc_tensor.item()/world_size
+        ep_loss = loss_tensor.item()/world_size
+    
+    return float(ep_acc), float(ep_loss)
+
+def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataLoader,  optimizer: Optimizer, loss_fn: nn.Module, 
+          epochs: int, device: torch.device, warmup_epochs: int = 0, CosAnnealing=False) -> Dict[str, List]:
 
     results = {"train_loss": [], "train_acc": [], 
                "test_loss": [], "test_acc": [],
@@ -144,15 +179,17 @@ def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataL
         cosine_scheduler = CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs)
     
     for epoch in range(epochs):
-        if hasattr(train_dataloader.sampler, 'set_epoch'): train_dataloader.sampler.set_epoch(epoch)
+        if hasattr(train_dataloader.sampler, 'set_epoch'): 
+            train_dataloader.sampler.set_epoch(epoch)
     
-    
-        train_loss, train_acc = train_step(model, train_dataloader, epoch+1, loss_fn, optimizer, device)
+        train_acc, train_loss = train_step(model, train_dataloader, epoch+1, loss_fn, optimizer, device)
+
         if epoch < warmup_epochs:
             warmup_scheduler.step()
         elif CosAnnealing:
             cosine_scheduler.step()
-        test_loss, test_acc = test_step(model, test_dataloader, epoch+1, loss_fn, device)
+
+        test_acc, test_loss = test_step(model, test_dataloader, epoch+1, loss_fn, device)
 
         if torch.distributed.is_initialized():
             max_acc_tensor = torch.tensor([max_test_acc], device=device)
