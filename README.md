@@ -2,6 +2,10 @@
 
 A project building off of findings from https://arxiv.org/abs/2405.15018
 
+Abstract:
+
+Supervised pre-trained deep neural networks (DNNs) contain embeddings that are widely used for downstream classification tasks; However, their performance can vary widely based in part on factors impacting the training dataset. In this paper, we adopt a revised tunnel-effect hypothesis from earlier work, suggesting representation compression is the primary cause of poor out-of-distribution (OOD) generalization. We quantify the impact of varying augmentation strategies and unique training sample sizes using a novel SHAP analysis based on the performance of various linear probes on various OOD datasets. Our results shed light on the effects over-augmentation and large unique sample counts have on OOD generalization.
+
 Usage
 -------------
 
