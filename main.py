@@ -3,18 +3,19 @@ import wandb
 import argparse
 import backbone
 import probe
-import Models
-import analysis
+import Utils.Models as Models
+import Utils.analysis as analysis
 import torch
 import os
 import pandas as pd
 import json
 from pathlib import Path
-import analysis
 import torch.multiprocessing as mp
 from torch.multiprocessing import Manager
 import pandas as pd, re
 import hashlib
+import torch_xla.debug.profiler as xp
+
 
 SEED = 30
 
@@ -38,6 +39,7 @@ def parse_args():
     parser.add_argument("--backbone_aug_policy_setting", nargs="+", required=True, help="Backbone aug policy binary array.")
     parser.add_argument("--backbone_batch_size", type=int, default=512, help="Batch size for training.")
     parser.add_argument("--backbone_lr", type=float, default=0.01, help="Learning rate for optimizer.")
+    parser.add_argument("--backbone_wd", type=float, default=0.01, help="Learning rate for optimizer.")
     parser.add_argument("--backbone_label_smoothing", type=float, default=0.1, help="Label smoothing for targets.")
     parser.add_argument("--backbone_epochs", type=int, default=512, help="Number of training epochs.")
     parser.add_argument("--backbone_cuda_devices", nargs="+", type=int, default=[0,1], help="CUDA device IDs to use.")
@@ -57,7 +59,6 @@ def parse_args():
     
     # Shared arguments
     parser.add_argument("--use_wandb", type=bool, default=False, help="Enable Weights & Biases logging.")
-    parser.add_argument("--run_name", type=str, default="Untitled Run", help="Name W&B run.")
     parser.add_argument("--run_ID", type=str, default=None, help="Run ID, if empty will be created automatically")
     parser.add_argument("--run_ID_version", type=str, default="0", help="Run ID version (since deleted runs need a new one)")
     parser.add_argument("--use_ddp", type=bool, default=False, help="Train model on multiple GPUs using DDP paradigm")
@@ -84,6 +85,14 @@ def encode_vector(vector):
     scalar = int(hash_object.hexdigest(), 16) % 10000  # 4-digit scalar
     return scalar
 
+def extract_run_name(backbone_pth):
+    path_parts = backbone_pth.split('/')
+    model = path_parts[-3]
+    dataset = path_parts[-2]
+    mode = path_parts[-1].split(':')[-1].replace('.pth', '')
+    run_name = f"{model} + {dataset} + {mode}"
+    return run_name
+
 if __name__ == '__main__':
     args = parse_args()
     device = None
@@ -93,13 +102,14 @@ if __name__ == '__main__':
     print(f'\nDevice being used: ', device if device else 'TPU', '\n')
     
     run_id = f"backbone_{args.backbone_architecture}-{args.backbone_dataset_name}-man_aug_{encode_vector(args.backbone_man_aug_setting)}-policy_aug_{encode_vector(args.backbone_aug_policy_setting)}" if args.run_ID=="" else args.run_ID
+    run_name = extract_run_name(args.backbone_pth)
     if args.use_wandb:
         wandb_run_id = run_id + f'-v{args.run_ID_version}'
         wandb.init(
             project="Aug & Tunnel Effect",
             id=wandb_run_id,
             resume='allow',
-            name=args.run_name,
+            name=run_name,
             config=vars(args))
     
     visualized_fig = analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, aug_policy=args.backbone_aug_policy_setting, filename="./figures/sampled_images.jpg")
@@ -170,52 +180,30 @@ if __name__ == '__main__':
                 backbone_ret), nprocs=None)
 
         backbone_results = backbone_ret[0]
-        
         if args.use_wandb and backbone_results:
-            if visualized_fig:
+            if visualized_fig: 
                 wandb.log({"dataset_samples": wandb.Image(visualized_fig)})
-            backbone_accuracy_data = [
-                [epoch + 1, value, series]
-                for epoch, (train_acc, test_acc) in enumerate(zip(backbone_results['train_acc'], backbone_results['test_acc']))
-                for value, series in zip([train_acc, test_acc], ["Backbone Train Accuracy", "Backbone Test Accuracy"])
-            ]
-            backbone_loss_data = [
-                [epoch + 1, value, series]
-                for epoch, (train_loss, test_loss) in enumerate(zip(backbone_results['train_loss'], backbone_results['test_loss']))
-                for value, series in zip([train_loss, test_loss], ["Backbone Train Loss", "Backbone Test Loss"])
-            ]
+            
+            for epoch, (train_acc, test_acc) in enumerate(zip(backbone_results['train_acc'], backbone_results['test_acc'])):
+                wandb.log({
+                    "Backbone Train Accuracy": train_acc,
+                    "Backbone Test Accuracy": test_acc,
+                    "epoch": epoch + 1
+                })
+            
+            for epoch, (train_loss, test_loss) in enumerate(zip(backbone_results['train_loss'], backbone_results['test_loss'])):
+                wandb.log({
+                    "Backbone Train Loss": train_loss,
+                    "Backbone Test Loss": test_loss,
+                    "epoch": epoch + 1
+                })
 
-            backbone_accuracy_chart = wandb.plot.line(
-                table=wandb.Table(data=backbone_accuracy_data, columns=["Epoch", "Value", "Series"]),
-                x="Epoch",
-                y="Value",
-                stroke="Series",
-                title="Backbone Accuracy Over Epochs"
-            )
-            backbone_loss_chart = wandb.plot.line(
-                table=wandb.Table(data=backbone_loss_data, columns=["Epoch", "Value", "Series"]),
-                x="Epoch",
-                y="Value",
-                stroke="Series",
-                title="Backbone Loss Over Epochs"
-            )
-
-            # Log only the charts
-            wandb.log({
-                "Backbone Accuracy Chart": backbone_accuracy_chart,
-                "Backbone Loss Chart": backbone_loss_chart
-            })
         backbone_acc = backbone_results['max_test_acc']
-        # gather summary info & save
-        backbone_csv_dir = Path("./csv_results/")
-        backbone_csv_dir.mkdir(parents=True, exist_ok=True)
-        csv_path = backbone_csv_dir / 'Backbones.csv'
-        m = re.search(r'\d+', args.backbone_dataset_name)
-        id_class_count = int(m.group()) if m else None
-        overparam_lvl = analysis.compute_overparam_val(args.backbone_architecture, args.backbone_dataset_base_pth, args.backbone_dataset_name)
 
-        analysis.summarize_backbone_experiments(args.run_name, csv_path, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting,
-                                                args.img_dims, id_class_count, overparam_lvl, len(probe_layers), backbone_acc)
+        # gather summary info & save
+        model = re.search(r'\d+', args.backbone_dataset_name)
+        id_class_count = int(model.group()) if model else None
+        analysis.summarize_backbone_experiments(wandb, run_name, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting, backbone_acc)
     else: 
         print(f"Backbone {args.backbone_pth} found, probing with this.")
         backbone_acc = args.backbone_t1Max
@@ -232,7 +220,7 @@ if __name__ == '__main__':
     for i in range(len(probing_datasets)):
         probe_results[probing_datasets[i]] = []
         for j in range(len(probe_layers)):
-            full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting))  + "-aug_policy:" + str(encode_vector(args.backbone_aug_policy_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j]
+            full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting))  + "-aug_policy:" + str(encode_vector(args.backbone_aug_policy_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
             #if Path.exists(Path(full_probe_pth)) and not (probing_datasets[i] == args.backbone_dataset_name):
                 #print(f'\nProbed dataset: {probing_datasets[i]}, moving to next...')
                 #continue
@@ -251,7 +239,7 @@ if __name__ == '__main__':
                         args.backbone_architecture,
                         full_probe_pth,
                         args.probe_architecture,
-                        probe_layers[j],
+                        probe_layers[j] if probe_layers else probe_layers,
                         args.img_dims,
                         args.probe_lr,
                         args.probe_label_smoothing,
@@ -270,7 +258,7 @@ if __name__ == '__main__':
                         args.backbone_architecture,
                         full_probe_pth,
                         args.probe_architecture,
-                        probe_layers[j],
+                        probe_layers[j] if probe_layers else probe_layers,
                         args.img_dims,
                         args.probe_lr,
                         args.probe_label_smoothing,
@@ -294,7 +282,7 @@ if __name__ == '__main__':
                     args.backbone_architecture,
                     full_probe_pth,
                     args.probe_architecture,
-                    probe_layers[j],
+                    probe_layers[j] if probe_layers else probe_layers,
                     args.img_dims,
                     args.probe_lr,
                     args.probe_label_smoothing,
@@ -370,7 +358,7 @@ if __name__ == '__main__':
 
             if probe_ret: probe_results[probing_datasets[i]].append(probe_ret['max_test_acc'])
             
-            if not probe_ret: print(f"No probing results for dataset {probing_datasets[i]} at layer {probe_layers[j]}")
+            if not probe_ret: print(f"No probing results for dataset {probing_datasets[i]} at layer {probe_layers[j] if probe_layers else probe_layers}")
 
     print(f'\nProbed all datasets.')
 
@@ -396,6 +384,6 @@ if __name__ == '__main__':
             r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count)
         
             analysis.summarize_probe_experiments(run_id, probe_csv_path, args.backbone_architecture, args.backbone_man_aug_setting, 
-                                            args.backbone_aug_policy_setting, args.img_dims, id_class_count, overparam_lvl, len(probe_layers),
+                                            args.backbone_aug_policy_setting, args.img_dims, id_class_count, len(probe_layers),
                                             backbone_acc, args.probe_architecture, r, rho, A)
     

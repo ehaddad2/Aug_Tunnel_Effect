@@ -21,10 +21,11 @@ import matplotlib.pyplot as plt
 from torchvision.transforms.functional import to_pil_image
 from Utils import Augmentations
 from Utils import CustomDatasets
-import Models
+import Utils.Models as Models
 import pandas as pd, re
 import numpy as np
 from scipy.stats import pearsonr
+import os
 
 SEED = 30
 EMBEDDING_PATH_STR = "/home/elias/Deep Learning/Research/OOD/models/IN-100_Test1/embeddings/res18_0.pth"
@@ -61,8 +62,8 @@ class Analyzer():
                 _ = self.model(X)
                 
         hook.remove()
-        layer_outputs = torch.cat(layer_outputs)
-        return layer_outputs
+        tensor_layer_outputs = torch.cat(layer_outputs)
+        return tensor_layer_outputs
     
     def extract_embeddings(self, dataloader: torch.utils.data.DataLoader, device: torch.device, layer, n_samples = float('inf'), n_epochs = 0) -> torch.Tensor:
         ep_embeddings = []
@@ -191,8 +192,8 @@ class Analyzer():
         if not Path.exists(embedding_pth):
             print("\nNo embeddings found for analysis, extracting from scratch.")
             layer_name = list(nn.Sequential(*model.children()))[layer_offset] #get penultimate layer name
-            epoch_embeddings = self.extract_embeddings(model, train_dataloader, device, layer_name, n_epochs=epochs)
-            torch.save(epoch_embeddings, embedding_pth)
+            #epoch_embeddings = self.extract_embeddings(model, train_dataloader, device, layer_name, n_epochs=epochs)
+            #torch.save(epoch_embeddings, embedding_pth)
 
         else:
             print("\nEmbeddings found for analysis, using those.")
@@ -240,7 +241,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     mean, std = torch.tensor(mean).view(3, 1, 1), torch.tensor(std).view(3, 1, 1)
 
     for i in range(n_samples):
-        img, label = train_dataset[i]
+        img,label = train_dataset[i][0], train_dataset[i][1]
         img = (img * std) + mean
         img = img.permute(1, 2, 0).clamp_(0, 1).numpy()
         
@@ -271,26 +272,30 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     return fig
 
 
-def summarize_backbone_experiments(run_name, save_pth, backbone_arch, man_augs, aug_policies, img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc):
-    #arch_type = "CNN" if str.lower(backbone_arch) in ['resnet', 'vgg'] else "ViT"
+def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, aug_policies, max_backbone_acc, save_pth="./csv_results/Backbones.csv"):
     
-    row = [run_name, backbone_arch] + man_augs + aug_policies + [img_dim, id_class_cnt, backbone_acc]
+    row = [run_name, backbone_arch] + man_augs + aug_policies + [max_backbone_acc]
     columns = (["Run Name", "Backbone Architecture"] 
                + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))] 
-               + ["img_dim", "ID Class Count", "Backbone Top-1 Accuracy"])
+               + ["Backbone Top-1 Accuracy"])
     
-    if save_pth.exists():
+    if wandb.run is not None: #log to wandb
+        table = wandb.Table(columns=["Run Name", "Backbone Architecture", "Manual Augmentations", "Backbone Top-1 Accuracy"])
+        table.add_data(run_name, backbone_arch, str(man_augs), max_backbone_acc)
+        wandb.log({"Backbone Experiment Summary": table})
+    
+    os.makedirs(os.path.dirname(save_pth), exist_ok=True)
+    if os.path.exists(save_pth): #save locally (for probing inputs)
         df = pd.read_csv(save_pth)
         new_row = pd.DataFrame([row], columns=columns)
         df = pd.concat([df, new_row], ignore_index=True)
-    else:
-        df = pd.DataFrame([row], columns=columns)
+    else: df = pd.DataFrame([row], columns=columns)
 
     df.to_csv(save_pth, index=False)
+    return df
 
 
-def summarize_probe_experiments(backbone_run_name, save_pth, backbone_arch, man_augs, aug_policies,
-                                img_dim, id_class_cnt, overparam_lvl, depth, backbone_acc, probe_arch, r, rho, A):
+def summarize_probe_experiments(backbone_run_name, save_pth, man_augs, aug_policies,r, rho, A):
     
     row = [backbone_run_name, r, rho, A] + man_augs + aug_policies 
     columns = ["Backbone Run Name", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
@@ -305,7 +310,7 @@ def summarize_probe_experiments(backbone_run_name, save_pth, backbone_arch, man_
     df.to_csv(save_pth)
 
 def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
-    train,_,n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
+    train, test, n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
     n_samples = len(train)
     mock_model = Models.Models().get_model(backbone_name, n_classes)
     P = sum(p.numel() for p in mock_model.parameters() if p.requires_grad)

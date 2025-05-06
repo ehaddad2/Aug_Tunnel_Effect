@@ -9,8 +9,10 @@ import numpy as np
 import torch.nn as nn
 from pathlib import Path
 from torchvision import transforms as T
-from Utils import CustomDatasets, Augmentations, TrainTPU, TrainGPU
-import Models
+from Utils import CustomDatasets, Augmentations
+from Utils.GPU import TrainGPU
+import Utils.Models as Models
+from Utils.TPU import TrainTPU
 try:
     import torch_xla.distributed.parallel_loader as pl
     import torch_xla.core.xla_model as xm
@@ -164,7 +166,7 @@ Helper Functions |
 """
 def prep_data(dataset_name, img_dims, dataset_base_pth, verbose=False):
     mean, std = Augmentations.get_mean_std(dataset_name)
-    T, _, _ = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
+    T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
     train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, seed=SEED, verbose=verbose)
     return train_dataset, test_dataset, num_classes
 
@@ -175,9 +177,7 @@ def initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone
 
     backbone = Models.Models().get_model(architecture=backbone_arch, num_classes=out_dim[backbone_ds_name])
     backbone.load_state_dict(torch.load(backbone_pth, weights_only=True))
-    for param in backbone.parameters():
-        param.requires_grad = False
 
-    probe = Models.Models().lp1(backbone=backbone, img_dims=img_dims, probe_layer=probe_layer, probe_out=num_classes)
-
+    probe = Models.Models().lp1(backbone=backbone, backbone_arch=backbone_arch, img_dims=img_dims, probe_layer=probe_layer, probe_out=num_classes)
+    
     return probe

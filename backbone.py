@@ -9,14 +9,14 @@ import numpy as np
 import torch.nn as nn
 from pathlib import Path
 from torchvision import transforms as T
-from Utils import CustomDatasets, Augmentations, TrainTPU, TrainGPU
-import Models
+from Utils import CustomDatasets, Augmentations
+from Utils.GPU import TrainGPU
+import Utils.Models as Models
+from Utils.TPU import TrainTPU
 try:
     import torch_xla.distributed.parallel_loader as pl
     import torch_xla.core.xla_model as xm
     import torch_xla.runtime as xr
-    from torch_xla.distributed.fsdp import XlaFullyShardedDataParallel as FSDP
-    from torch_xla.distributed.fsdp.wrap import always_wrap_policy
 except ImportError:
     print("Note: torch_xla is not available. TPU support is disabled.")
 
@@ -52,9 +52,7 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, architecture
         epochs,
         device,
         warmup_epochs,
-        use_cos_annealing,
-        cutmix_a=train_dataset.mixup_alpha,
-        mixup_a=train_dataset.cutmix_alpha)
+        use_cos_annealing)
     
     Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), backbone_pth)
@@ -92,9 +90,7 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         epochs, 
         rank, 
         warmup_epochs,
-        use_cos_annealing,
-        cutmix_a=train_dataset.mixup_alpha,
-        mixup_a=train_dataset.cutmix_alpha)
+        use_cos_annealing)
 
     if rank == 0:
         Path(backbone_pth).parent.mkdir(parents=True, exist_ok=True)
@@ -148,8 +144,8 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
         train_loader, 
         device,
         loader_prefetch_size=512,
-        device_prefetch_size=2,
-        host_to_device_transfer_threads=8)
+        device_prefetch_size=4,
+        host_to_device_transfer_threads=16)
     test_loader = pl.MpDeviceLoader(
         test_loader, 
         device,

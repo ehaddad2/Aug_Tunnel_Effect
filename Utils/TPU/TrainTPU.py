@@ -10,7 +10,6 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import numpy as np
 import random
-import torch_xla.debug.profiler as xp
 from Utils import Augmentations as Augs
 
 SEED = 30
