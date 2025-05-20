@@ -52,33 +52,41 @@ def sample_bucketed_combos(sample_size: int,
     # drop all‑zero rows
     return data[data.any(axis=1)]
 
+    
 
 # ------------------------------ example ------------------------------
 if __name__ == "__main__":
     # Per‑augmentation bounds  (min, max)  — blur, noise, invert … capped at 0.1
     aug_bounds = [
-        (0, 0.3),   # Horizontal flip
-        (0, 0.3),   # Resize crop
-        (0, 0.3),   # Random affine
-        (0, 0.3),   # Scale jitter
-        (0, 0.3),   # Gaussian blur   (semantic‑loss capped)
-        (0, 0.3),   # Gaussian noise  (semantic‑loss capped)
-        (0, 0.3),   # Color jitter
-        (0, 0.3),   # Color distortion
-        (0, 0.3),   # Random invert   (semantic‑loss capped)
-        (0, 0.3),   # Solarise        (semantic‑loss capped)
-        (0, 0.3),   # Autocontrast    (semantic‑loss capped)
-        (0, 0.3),   # CutOut
-        (0, 0.3),   # Tempered MixUp
-        (0, 0.3),   # CutMix
+        (0, 0.5),   # Horizontal flip 
+        (0, 0),     # Resize crop
+        (0, 0.5),   # Random affine
+        (0, 0),     # Scale jitter
+        (0, 0.5),   # Gaussian blur   (semantic‑loss capped)
+        (0, 0.5),   # Gaussian noise  (semantic‑loss capped)
+        (0, 0.5),   # Color jitter
+        (0, 0.5),   # Color distortion
+        (0, 0.5),   # Random invert   (semantic‑loss capped)
+        (0, 0.5),   # Solarize        (semantic‑loss capped) 
+        (0, 0.5),   # Autocontrast    (semantic‑loss capped)
+        (0, 0),     # CutOut
+        (0, 0.5),   # Tempered MixUp
+        (0, 0),     # CutMix
     ]
 
-    X = sample_bucketed_combos(sample_size=200_000, bounds=aug_bounds)
+    X = sample_bucketed_combos(sample_size=200_000, bounds=aug_bounds, levels=(0, 0.1, 0.3, 0.4))
     init_centres = kmeans_pp_init(X, k=10, random_state=42)
 
     # ensure mandatory zeros on dims 3, 11, 13 if needed
     init_centres[:, [3, 11, 13]] = 0
 
     print("k‑means++ initial centres:")
+    counts = {}
     for c in init_centres:
         print(c.tolist())
+        for strength in c:
+            if str(strength) not in counts: counts[str(strength)] = 0
+            counts[str(strength)]+=1
+
+    print("\nFrequency of Each Val:")
+    print(counts)
