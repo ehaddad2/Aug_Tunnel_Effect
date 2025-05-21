@@ -2,9 +2,9 @@
     "backbone_dataset_base_pth": "./data/ID/",
     "backbone_dataset_name": "imagenet-100",
     "backbone_architecture": "vgg19",
-    "backbone_pth": "./models/Backbones/vgg19/imagenet-100/aug:baseline4_test8.pth",
-    "backbone_man_aug_setting": [0.4, 0.0, 0.4, 0.0, 0.4, 0.3, 0.1, 0.3, 0.3, 0.4, 0.4, 0.0, 0.1, 0.0],
-    "backbone_aug_policy_setting": [0,0,0],
+    "backbone_pth": "./models/Backbones/vgg19/imagenet-100/aug:baseline4_test0.pth",
+    "backbone_man_aug_setting": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+ 
     "backbone_lr": 0.003,
     "backbone_batch_size": 256,
     "backbone_epochs": 100,
