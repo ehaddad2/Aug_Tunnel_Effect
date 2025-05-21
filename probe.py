@@ -55,19 +55,14 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_
     return train_res
         
         
-def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer, 
+def ddp_worker(rank, world_size, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer, 
             img_dims, lr, label_smoothing, epochs, batch_size, ret):
     """
     worker for cuda DDP
     """
-    world_size = torch.distributed.get_world_size()
+    ddp_setup(rank, world_size)
     train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, rank==0)
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12358'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
-
-    probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer, rank==0).to(rank)
+    probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer).to(rank)
     ddp_model = DDP(probe, device_ids=[rank], find_unused_parameters=True)
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED)
@@ -76,7 +71,7 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
     test_loader = DataLoader(test_dataset, batch_size, sampler=test_sampler, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(rank)
     opt = torch.optim.AdamW(ddp_model.parameters(), lr=lr, weight_decay=0.05)
-    
+
     train_res = TrainGPU.train(
         ddp_model, 
         train_loader, 
@@ -89,7 +84,7 @@ def ddp_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
     if rank == 0:
         Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
         torch.save(ddp_model.module.state_dict(), probe_pth)
-        ret.put(train_res)
+        ret[0] = train_res
     
     dist.destroy_process_group()
 
@@ -167,6 +162,7 @@ Helper Functions |
 def prep_data(dataset_name, img_dims, dataset_base_pth, verbose=False):
     mean, std = Augmentations.get_mean_std(dataset_name)
     T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
+    T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
     train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, seed=SEED, verbose=verbose)
     return train_dataset, test_dataset, num_classes
 
@@ -174,10 +170,13 @@ def initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone
     out_dim = {
         'imagenet-100': 100
     }
+    backbone = Models.BackboneModel().load_backbone(backbone_pth, architecture=backbone_arch, num_classes=out_dim[backbone_ds_name])
+    probe = Models.ProbeModel(backbone)._create_cnn_probe(img_dims, probe_layer, num_classes)
 
-    backbone = Models.Models().get_model(architecture=backbone_arch, num_classes=out_dim[backbone_ds_name])
-    backbone.load_state_dict(torch.load(backbone_pth, weights_only=True))
-
-    probe = Models.Models().lp1(backbone=backbone, backbone_arch=backbone_arch, img_dims=img_dims, probe_layer=probe_layer, probe_out=num_classes)
-    
     return probe
+
+def ddp_setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12357'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)

@@ -67,13 +67,12 @@ def parse_args():
     parser.add_argument("--loader_workers", type=int, default=0, help="Number of worker processes for each dataloader")
     return args
 
-def get_probe_dataset_names(base_pths, id_ds_name):
-    datasets = [id_ds_name, 'aircrafts', 'cifar-10', 'cub-200', 'flowers-102', 'stl-10', 'ninco', 'ham10000', 'esc-50']
+def get_probe_dataset_names(args):
+    backbone_ds_base_path, probe_ds_base_pth = args.backbone_dataset_base_pth, args.probe_datasets_base_pth
+    id_ds_name, ood_ds_names = args.backbone_dataset_name, args.preset_ood_datasets if (args.probe_datasets and args.probe_datasets[0]=='all') else args.probe_datasets
+    datasets = [id_ds_name] + ood_ds_names
     ret = []
-    for base_pth in base_pths: #add in current datasets
-        if not os.path.isdir(base_pth): raise NotADirectoryError(f"{base_pth} is not a directory.")
-        else: ret += [filename for filename in os.listdir(base_pth)]
-    
+
     for ds in datasets: #add in missing ones
         if ds not in ret: ret.append(ds)
 
@@ -82,7 +81,7 @@ def get_probe_dataset_names(base_pths, id_ds_name):
 def encode_vector(vector):
     vector_str = ','.join(map(str, vector))
     hash_object = hashlib.sha256(vector_str.encode())
-    scalar = int(hash_object.hexdigest(), 16) % 10000  # 4-digit scalar
+    scalar = int(hash_object.hexdigest(), 16) % 10000
     return scalar
 
 def extract_run_name(backbone_pth):
@@ -120,13 +119,13 @@ if __name__ == '__main__':
     -----------------|
     """
     backbone_results = None
-    probe_layers = Models.get_all_probe_layer_names(args.backbone_architecture) if (args.probe_layers and str.lower(args.probe_layers[0]) == 'all') else args.probe_layers
+
     if not Path.exists(Path(args.backbone_pth)) or 'test' in args.backbone_pth:
         manager = Manager()
         backbone_ret = manager.dict()
         
         if device:
-            if (('cpu' in device.type) or ('cuda' in device.type)) and not args.ddp: #either cpu or DP training
+            if (('cpu' in device.type) or ('cuda' in device.type)) and not args.use_ddp: #either cpu or DP training
                 backbone_ret = backbone.cpu_worker(
                 device,
                 args.loader_workers,
@@ -143,8 +142,9 @@ if __name__ == '__main__':
                 args.backbone_batch_size,
                 cuda_devices=args.backbone_cuda_devices)
 
-            elif ('cuda' in device.type) and args.ddp: #DDP for cuda
+            elif ('cuda' in device.type) and args.use_ddp: #DDP for cuda
                 mp.spawn(backbone.ddp_worker, args= (
+                len(args.backbone_cuda_devices),
                 args.loader_workers,
                 args.backbone_dataset_base_pth,
                 args.backbone_dataset_name,
@@ -214,10 +214,10 @@ if __name__ == '__main__':
     -----------------|
     """
     probe_results = {}  # {dataset: [layer1_acc, layer2_acc, ...]}
-    probing_datasets = get_probe_dataset_names([args.backbone_dataset_base_pth, args.probe_datasets_base_pth], args.backbone_dataset_name) if (args.probe_datasets and str.lower(args.probe_datasets[0]) == 'all') else args.probe_datasets
-    print(probe_layers)
+    probing_datasets = get_probe_dataset_names(args)
+    probe_layers = Models.get_all_probe_layer_names(args) if (args.probe_layers and str.lower(args.probe_layers[0]) == 'all') else args.probe_layers
     manager = Manager()
-    for i in range(len(probing_datasets)):
+    for i in range(1, len(probing_datasets)):
         probe_results[probing_datasets[i]] = []
         for j in range(len(probe_layers)):
             full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting))  + "-aug_policy:" + str(encode_vector(args.backbone_aug_policy_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
@@ -226,7 +226,6 @@ if __name__ == '__main__':
                 #continue
             print(f'\nProbing dataset: {probing_datasets[i]} at probe layer: {probe_layers[j]}')
             probe_ret = None 
-            print(full_probe_pth)
             if device:
                 if (('cpu' in device.type) or ('cuda' in device.type)) and not args.use_ddp:
                     probe_ret = probe.cpu_worker(
@@ -250,6 +249,7 @@ if __name__ == '__main__':
                 elif ('cuda' in device.type) and args.use_ddp:
                     probe_ret = manager.dict()
                     mp.spawn(probe.ddp_worker, args=(
+                        len(args.probe_cuda_devices),
                         args.loader_workers,
                         args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth,
                         probing_datasets[i],

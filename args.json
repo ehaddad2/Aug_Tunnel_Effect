@@ -4,7 +4,6 @@
     "backbone_architecture": "vgg19",
     "backbone_pth": "./models/Backbones/vgg19/imagenet-100/aug:baseline4_test0.pth",
     "backbone_man_aug_setting": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
- 
     "backbone_lr": 0.003,
     "backbone_batch_size": 256,
     "backbone_epochs": 100,
@@ -14,10 +13,10 @@
     "use_ddp": false,
     "use_tpu": true,
     "probe_datasets_base_pth": "./data/OOD/",
-    "probe_datasets": [],
+    "probe_datasets": ["ninco"],
     "probe_pth": "./models/Probes/resnet18/imagenet-100/aug:2.pth",
     "probe_architecture": "lp1",
-    "probe_layers": [],
+    "probe_layers": ["all"],
     "probe_lr": 0.001,
     "probe_batch_size": 128,
     "probe_epochs": 30,
@@ -27,5 +26,68 @@
     "run_ID": "",
     "run_ID_version": "",
     "img_dims": 224,
-    "loader_workers": 20
+    "loader_workers": 20,
+
+    "preset_ood_datasets": ["aircrafts", "cifar-10", "cub-200", "flowers-102", "stl-10", "ninco", "ham10000", "esc-50"],
+    "preset_probing_layers":
+    {
+        "resnet18_probe_layers": 
+        [
+            "conv1",
+            "layer1.0.conv1",
+            "layer1.0.conv2",
+            "layer1.1.conv1",
+            "layer1.1.conv2",
+            "layer2.0.conv1",
+            "layer2.0.conv2",
+            "layer2.1.conv1",
+            "layer2.1.conv2",
+            "layer3.0.conv1",
+            "layer3.0.conv2",
+            "layer3.1.conv1",
+            "layer3.1.conv2",
+            "layer4.0.conv1",
+            "layer4.0.conv2",
+            "layer4.1.conv1",
+            "layer4.1.conv2"
+        ],
+
+        "vgg19_probe_layers": 
+        [
+            "features.0",
+            "features.3",
+            "features.7",
+            "features.10",
+            "features.14",
+            "features.17",
+            "features.20",
+            "features.23",
+            "features.27",
+            "features.30",
+            "features.33",
+            "features.36",
+            "features.40",
+            "features.43",
+            "features.46",
+            "features.49"
+        ],
+
+        "vit_tiny_probing_layers":
+        [
+            "patch_embed",
+            "blocks.0",
+            "blocks.1",
+            "blocks.2",
+            "blocks.3",
+            "blocks.4",
+            "blocks.5",
+            "blocks.6",
+            "blocks.7",
+            "blocks.8",
+            "blocks.9",
+            "blocks.10",
+            "blocks.11",
+            "norm"
+        ]
+    }
 }
