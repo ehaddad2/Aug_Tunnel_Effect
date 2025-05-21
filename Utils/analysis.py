@@ -217,13 +217,14 @@ if __name__ == '__main__':
 
 
 
-def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples=5, filename="sampled_images.jpg"):
+def visualize_dataset(dataset_path, dataset_name, man_aug, n_samples=5, filename="sampled_images.jpg"):
     mean, std = Augmentations.get_mean_std(dataset_name)
     test_T = Augmentations.get_transformations(mean, std, aug_array=[0]*14)
-    if not sum(aug_policy):
-        train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug)
-        train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2])
-    else:
+
+    train_T = Augmentations.get_transformations(mean, std, aug_array=man_aug)
+    train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, train_T, test_T, seed=SEED, cutmix_alpha=man_aug[-1], mixup_alpha=man_aug[-2])
+    
+    """else:
         train_dataset,_,_ = CustomDatasets.load_dataset(dataset_name, dataset_path, Transforms.Compose([]), test_T, seed=SEED)
         polices = []
         if aug_policy[0]:
@@ -234,7 +235,7 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
             train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224], [1, 1], polices=polices)
         if aug_policy[2]:
             polices.append('dino')
-            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], polices=polices)
+            train_dataset = Augmentations.MultiCropDataset(train_dataset, [224, 224, 96], [1, 1, 6], polices=polices)"""
 
     fig, axes = plt.subplots(1, n_samples, figsize=(n_samples*2, 2))
     mean, std = Augmentations.get_mean_std(dataset_name)
@@ -252,13 +253,8 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     # Get active augmentation names with their values
     active_augs = [f"{Augmentations.idx_to_man_aug[j]} (ψ={man_aug[j]})" for j in range(len(man_aug)) if man_aug[j] > 0]
     
-    # Get augmentation policy name if activated
-    aug_policy_name = Augmentations.idx_to_aug_policy.get(aug_policy[0], "Unknown Policy") if aug_policy[0] > 0 else None
-    
     # Create subtitle
     subtitle = ""
-    if aug_policy_name:
-        subtitle += f"Policy: {aug_policy_name}\n"
     subtitle += "Augs: " + (", ".join(active_augs) if active_augs else "None")
     
     plt.figtext(0.5, -0.05, subtitle, 
@@ -272,11 +268,11 @@ def visualize_dataset(dataset_path, dataset_name, man_aug, aug_policy, n_samples
     return fig
 
 
-def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, aug_policies, max_backbone_acc, save_pth="./csv_results/Backbones.csv"):
+def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, max_backbone_acc, save_pth="./csv_results/Backbones.csv"):
     
-    row = [run_name, backbone_arch] + man_augs + aug_policies + [max_backbone_acc]
+    row = [run_name, backbone_arch] + man_augs + [max_backbone_acc]
     columns = (["Run Name", "Backbone Architecture"] 
-               + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))] 
+               + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
                + ["Backbone Top-1 Accuracy"])
     
     if wandb.run is not None: #log to wandb
@@ -295,10 +291,10 @@ def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, aug
     return df
 
 
-def summarize_probe_experiments(backbone_run_name, save_pth, man_augs, aug_policies,r, rho, A):
+def summarize_probe_experiments(backbone_run_name, save_pth, man_augs,r, rho, A):
     
-    row = [backbone_run_name, r, rho, A] + man_augs + aug_policies 
-    columns = ["Backbone Run Name", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))] + [f"aug_policy_{i+1}" for i in range(len(aug_policies))]
+    row = [backbone_run_name, r, rho, A] + man_augs 
+    columns = ["Backbone Run Name", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
 
     if save_pth.exists():
         df = pd.read_csv(save_pth)

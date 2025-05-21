@@ -37,12 +37,6 @@ idx_to_man_aug = {
         13: "CutMix"
 }
 
-idx_to_aug_policy = {
-        0: "SwAV (2 Global + 6 Local Views)",
-        1: "Barlow Twins (2 Global + 0 Local Views)", 
-        2: "DINO (2 Global + 6 Local Views)"
-}
-
 """
 Helper funcs/classes
 """

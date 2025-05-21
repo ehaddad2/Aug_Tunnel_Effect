@@ -91,7 +91,7 @@ The following are mappings from the indices of the aug combos and aug polices in
     2. DINO (2 Global Views + 6 Local Views)
 
 
-## Experiment Details & Progress (no scale jitter, cutout, cutmix)
+## Backbone Experiment Details & Progress (no scale jitter, cutout, cutmix)
 
 ### 1. kmeans++ experiments (Model = resnet18)
 
@@ -197,3 +197,7 @@ If you change batch size due to hardware, you need to scale LR appropriately
 for example, if you reduce batch size to 256, LR should be scaled by 0.5 (for VGG: 3e-3) (edited) 
 
 effective LR = base LR x (chosen batch size / 512)
+
+
+## Layer-Wise Probing Experiment Details & Progress
+

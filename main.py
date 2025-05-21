@@ -36,7 +36,6 @@ def parse_args():
     parser.add_argument("--backbone_architecture", type=str, required=True, help="Model architecture.")
     parser.add_argument("--backbone_pth", type=str, required=True, help="Path to the backbone model.")
     parser.add_argument("--backbone_manual_aug_setting", nargs="+", required=True, help="Backbone manual aug binary array.")
-    parser.add_argument("--backbone_aug_policy_setting", nargs="+", required=True, help="Backbone aug policy binary array.")
     parser.add_argument("--backbone_batch_size", type=int, default=512, help="Batch size for training.")
     parser.add_argument("--backbone_lr", type=float, default=0.01, help="Learning rate for optimizer.")
     parser.add_argument("--backbone_wd", type=float, default=0.01, help="Learning rate for optimizer.")
@@ -100,7 +99,7 @@ if __name__ == '__main__':
         mp.set_start_method('spawn', force=True)
     print(f'\nDevice being used: ', device if device else 'TPU', '\n')
     
-    run_id = f"backbone_{args.backbone_architecture}-{args.backbone_dataset_name}-man_aug_{encode_vector(args.backbone_man_aug_setting)}-policy_aug_{encode_vector(args.backbone_aug_policy_setting)}" if args.run_ID=="" else args.run_ID
+    run_id = f"backbone_{args.backbone_architecture}-{args.backbone_dataset_name}-man_aug_{encode_vector(args.backbone_man_aug_setting)}" if args.run_ID=="" else args.run_ID
     run_name = extract_run_name(args.backbone_pth)
     if args.use_wandb:
         wandb_run_id = run_id + f'-v{args.run_ID_version}'
@@ -111,7 +110,7 @@ if __name__ == '__main__':
             name=run_name,
             config=vars(args))
     
-    visualized_fig = analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, aug_policy=args.backbone_aug_policy_setting, filename="./figures/sampled_images.jpg")
+    visualized_fig = analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, filename="./figures/sampled_images.jpg")
 
     """
     -----------------|
@@ -134,7 +133,6 @@ if __name__ == '__main__':
                 args.backbone_architecture,
                 args.backbone_pth, 
                 args.backbone_man_aug_setting,
-                args.backbone_aug_policy_setting,
                 args.img_dims,
                 args.backbone_lr,
                 args.backbone_label_smoothing,
@@ -151,7 +149,6 @@ if __name__ == '__main__':
                 args.backbone_architecture,
                 args.backbone_pth, 
                 args.backbone_man_aug_setting,
-                args.backbone_aug_policy_setting,
                 args.img_dims,
                 args.backbone_lr,
                 args.backbone_label_smoothing,
@@ -171,7 +168,6 @@ if __name__ == '__main__':
                 args.backbone_architecture,
                 args.backbone_pth, 
                 args.backbone_man_aug_setting,
-                args.backbone_aug_policy_setting,
                 args.img_dims,
                 args.backbone_lr,
                 args.backbone_label_smoothing,
@@ -203,7 +199,7 @@ if __name__ == '__main__':
         # gather summary info & save
         model = re.search(r'\d+', args.backbone_dataset_name)
         id_class_count = int(model.group()) if model else None
-        analysis.summarize_backbone_experiments(wandb, run_name, args.backbone_architecture, args.backbone_man_aug_setting, args.backbone_aug_policy_setting, backbone_acc)
+        analysis.summarize_backbone_experiments(wandb, run_name, args.backbone_architecture, args.backbone_man_aug_setting, backbone_acc)
     else: 
         print(f"Backbone {args.backbone_pth} found, probing with this.")
         backbone_acc = args.backbone_t1Max
@@ -220,7 +216,7 @@ if __name__ == '__main__':
     for i in range(1, len(probing_datasets)):
         probe_results[probing_datasets[i]] = []
         for j in range(len(probe_layers)):
-            full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting))  + "-aug_policy:" + str(encode_vector(args.backbone_aug_policy_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
+            full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
             #if Path.exists(Path(full_probe_pth)) and not (probing_datasets[i] == args.backbone_dataset_name):
                 #print(f'\nProbed dataset: {probing_datasets[i]}, moving to next...')
                 #continue
@@ -336,7 +332,6 @@ if __name__ == '__main__':
                     j+1,
                     args.backbone_architecture,
                     str(args.backbone_man_aug_setting),
-                    str(args.backbone_aug_policy_setting),
                     args.backbone_dataset_name,
                     probing_datasets[i],
                     backbone_acc,
@@ -348,7 +343,6 @@ if __name__ == '__main__':
                     "Layer_Num",
                     "Backbone Architecture",
                     "Manual Augmentation Setting",
-                    "Augmentation Policy Setting",
                     "ID Dataset",
                     "OOD Dataset",
                     "Backbone ID max top-1 test acc",
@@ -384,6 +378,5 @@ if __name__ == '__main__':
             r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count)
         
             analysis.summarize_probe_experiments(run_id, probe_csv_path, args.backbone_architecture, args.backbone_man_aug_setting, 
-                                            args.backbone_aug_policy_setting, args.img_dims, id_class_count, len(probe_layers),
-                                            backbone_acc, args.probe_architecture, r, rho, A)
+                                            args.img_dims, id_class_count, len(probe_layers), backbone_acc, args.probe_architecture, r, rho, A)
     
