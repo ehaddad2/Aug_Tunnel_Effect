@@ -119,7 +119,7 @@ if __name__ == '__main__':
     """
     backbone_results = None
 
-    if not Path.exists(Path(args.backbone_pth)) or 'test' in args.backbone_pth:
+    if not Path.exists(Path(args.backbone_pth)):
         manager = Manager()
         backbone_ret = manager.dict()
         
@@ -216,7 +216,7 @@ if __name__ == '__main__':
     for i in range(1, len(probing_datasets)):
         probe_results[probing_datasets[i]] = []
         for j in range(len(probe_layers)):
-            full_probe_pth = args.probe_pth + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
+            full_probe_pth = args.probe_pth + "/" + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
             #if Path.exists(Path(full_probe_pth)) and not (probing_datasets[i] == args.backbone_dataset_name):
                 #print(f'\nProbed dataset: {probing_datasets[i]}, moving to next...')
                 #continue

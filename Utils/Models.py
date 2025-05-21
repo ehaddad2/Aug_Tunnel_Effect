@@ -45,6 +45,7 @@ class BackboneModel:
                     ]
                     in_channels = x
             return nn.Sequential(*layers)
+
     """
     Module for creating backbones based on supported architectures:
     - resnet10
@@ -133,96 +134,90 @@ class BackboneModel:
         model = self.model_architectures[architecture.lower()](num_classes)
         return model
     
-class ProbeModel:
-    def __init__(self, backbone):
+class CNNProbe(nn.Module):
+    def __init__(self, backbone, probe_layer, num_classes, img_dims):
+        super().__init__()
         self.backbone = backbone
+        if hasattr(self.backbone, 'classifier'): self.backbone.classifier = nn.Identity()
+        elif hasattr(self.backbone, 'fc'): self.backbone.fc = nn.Identity()
+        self.backbone.eval()
+        for param in backbone.parameters():
+            param.requires_grad = False
+        self.probe_layer = probe_layer
+        self.probe_output = None
+        self._register_hook()
         
-    def _create_cnn_probe(self, img_dims, probe_layer, num_classes):
-        """Create a probe model for CNN architectures using hooks"""
-        
-        class CNNProbe(nn.Module):
-            def __init__(self, backbone, probe_layer, num_classes, img_dims):
-                super().__init__()
-                self.backbone = backbone
-                for param in backbone.parameters():
-                    param.requires_grad = False
-                self.probe_layer = probe_layer
-                self.probe_output = None
-                self._register_hook()
-                
-                with torch.no_grad(): #obtain dim info
-                    dummy_input = torch.randn(1, 3, img_dims, img_dims)
-                    _ = self.backbone(dummy_input)
-                    
-                    if self.probe_output is None:
-                        raise ValueError(f"Layer {probe_layer} not found in the model")
-                    
-                    pooled = nn.AdaptiveAvgPool2d((2, 2))(self.probe_output)
-                    feature_size = pooled.view(-1).shape[0]
-                
-                self.pool = nn.AdaptiveAvgPool2d((2, 2))
-                self.classifier = nn.Linear(feature_size, num_classes)
-                self.classifier.weight.data.normal_(mean=0, std=0.01)
-                self.classifier.bias.data.zero_()
+        with torch.no_grad(): #obtain dim info
+            dummy_input = torch.randn(1, 3, img_dims, img_dims)
+            _ = self.backbone(dummy_input)
             
-            def _register_hook(self):
-                def hook_fn(module, input, output):
-                    self.probe_output = output
-                
-                #find module to attach the hook
-                for name, module in self.backbone.named_modules():
-                    if name == self.probe_layer:
-                        module.register_forward_hook(hook_fn)
-                        break
+            if self.probe_output is None:
+                raise ValueError(f"Layer {probe_layer} not found in the model")
             
-            def forward(self, x):
-                self.probe_output = None
-                self.backbone(x) #probe result stored in probe_output
-                
-                if self.probe_output is None:
-                    raise RuntimeError(f"No features captured from layer: {self.probe_layer}")
-                
-                x = self.pool(self.probe_output)
-                x = torch.flatten(x, 1)
-                x = self.classifier(x)
-                return x
+            pooled = nn.AdaptiveAvgPool2d((2, 2))(self.probe_output)
+            feature_size = pooled.view(-1).shape[0]
         
-        probe_model = CNNProbe(self.backbone, probe_layer, num_classes, img_dims)
-        return probe_model
+        self.pool = nn.AdaptiveAvgPool2d((2, 2))
+        self.classifier = nn.Linear(feature_size, num_classes)
+        self.classifier.weight.data.normal_(mean=0, std=0.01)
+        self.classifier.bias.data.zero_()
     
-    def _create_vit_probe(self, backbone, img_dims, probe_layer, num_classes):
-        """Create a probe model for Vision Transformer architectures"""
-
-        class ViTProbe(nn.Module):
-            def __init__(self, backbone, probe_layer, num_classes):
-                super().__init__()
-                self.backbone = backbone
-                self.probe_layer = probe_layer
-                self.probe_features = None
-                self.classifier = nn.Linear(backbone.embed_dim, num_classes)
-                self._register_hook()
-            
-            def _register_hook(self):
-                def hook_fn(module, input, output):
-                    if isinstance(output, tuple):
-                        output = output[0]
-                    #skip the class token and average the patch tokens
-                    if output.dim() == 3 and output.size(1) > 1:  #shape = [B, N, C]
-                        self.probe_features = output[:, 1:].mean(dim=1)  #GAP over patch tokens
-                    else:
-                        self.probe_features = output
-                
-                #look for probing layer, attach hook
-                for name, module in self.backbone.named_modules():
-                    if name == self.probe_layer:
-                        module.register_forward_hook(hook_fn)
-                        break
-            
-            def forward(self, x):
-                self.backbone(x)
-                return self.classifier(self.probe_features)
+    def _register_hook(self):
+        def hook_fn(module, input, output):
+            self.probe_output = output
         
-        return ViTProbe(backbone, probe_layer, num_classes)
+        #find module to attach the hook
+        for name, module in self.backbone.named_modules():
+            if name == self.probe_layer:
+                module.register_forward_hook(hook_fn)
+                break
+    
+    def forward(self, x):
+        self.probe_output = None
+        self.backbone(x) #probe result stored in probe_output
+        
+        if self.probe_output is None:
+            raise RuntimeError(f"No features captured from layer: {self.probe_layer}")
+        
+        x = self.pool(self.probe_output)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+    
+class ViTProbe(nn.Module):
+    def __init__(self, backbone, probe_layer, num_classes):
+        super().__init__()
+        self.backbone = backbone
+        if hasattr(self.backbone, 'head'):
+            self.backbone.head = nn.Identity()
+        self.backbone.eval()
+        for param in backbone.parameters():
+            param.requires_grad = False
+        self.probe_layer = probe_layer
+        self.probe_features = None
+        self.classifier = nn.Linear(backbone.embed_dim, num_classes)
+        self._register_hook()
+    
+    def _register_hook(self):
+        def hook_fn(module, input, output):
+            if isinstance(output, tuple):
+                output = output[0]
+            #skip the class token and average the patch tokens
+            if output.dim() == 3 and output.size(1) > 1:  #shape = [B, N, C]
+                self.probe_features = output[:, 1:].mean(dim=1)  #GAP over patch tokens
+            else:
+                self.probe_features = output
+        
+        #look for probing layer, attach hook
+        for name, module in self.backbone.named_modules():
+            if name == self.probe_layer:
+                module.register_forward_hook(hook_fn)
+                break
+    
+    def forward(self, x):
+        self.backbone(x)
+        return self.classifier(self.probe_features)
+    
 
 """
 Helper classes & Functions
@@ -284,8 +279,7 @@ if __name__ == '__main__':
     print(f"\nTesting {len(resnet_probe_layers)} ResNet18 layers:")
     for layer in resnet_probe_layers:
         try:
-            probe_model = ProbeModel(resnet)._create_cnn_probe(
-                resnet, img_dims, layer, num_classes)
+            probe_model = CNNProbe(resnet, layer, num_classes, img_dims)
             
             # Test forward pass
             with torch.no_grad():
@@ -318,8 +312,7 @@ if __name__ == '__main__':
     print(f"\nTesting {len(vgg_probe_layers)} VGG19 layers:")
     for layer in vgg_probe_layers:
         try:
-            probe_model = ProbeModel(vgg)._create_cnn_probe(
-                vgg, img_dims, layer, num_classes)
+            probe_model = CNNProbe(vgg, layer, num_classes, img_dims)
             
             # Test forward pass
             with torch.no_grad():
@@ -356,8 +349,7 @@ if __name__ == '__main__':
     print(f"\nTesting {len(vit_probe_layers)} ViT-Tiny layers:")
     for layer in vit_probe_layers:
         try:
-            probe_model = ProbeModel(vit)._create_vit_probe(
-                vit, img_dims, layer, num_classes)
+            probe_model = ViTProbe(vit, layer, num_classes)
             
             # Test forward pass
             with torch.no_grad():

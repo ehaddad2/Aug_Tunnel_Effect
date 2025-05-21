@@ -37,7 +37,7 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_
     train_loader = DataLoader(train_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     test_loader = DataLoader(test_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-    probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer, True).to(device)
+    probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer).to(device)
     if torch.cuda.is_available(): probe = nn.DataParallel(probe, device_ids=cuda_devices)
     probe.to(device)
     opt = torch.optim.AdamW(probe.parameters(), lr=lr, weight_decay=0.05)
@@ -162,7 +162,6 @@ Helper Functions |
 def prep_data(dataset_name, img_dims, dataset_base_pth, verbose=False):
     mean, std = Augmentations.get_mean_std(dataset_name)
     T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
-    T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
     train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, seed=SEED, verbose=verbose)
     return train_dataset, test_dataset, num_classes
 
@@ -171,8 +170,14 @@ def initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone
         'imagenet-100': 100
     }
     backbone = Models.BackboneModel().load_backbone(backbone_pth, architecture=backbone_arch, num_classes=out_dim[backbone_ds_name])
-    probe = Models.ProbeModel(backbone)._create_cnn_probe(img_dims, probe_layer, num_classes)
+    probe = None
+    if ('resnet' in backbone_arch) or ('vgg' in backbone_arch):
+        probe = Models.CNNProbe(backbone, probe_layer, num_classes, img_dims)
+    elif 'vit' in backbone_arch:
+        probe = Models.ViTProbe(backbone, probe_layer, num_classes)
 
+    if not probe: raise NotImplementedError(f"Probe model not created for dataset {dataset_name} at layer {probe_layer} -- \nProbing for backbone architecture \"{backbone_arch}\" isn't supported")
+    
     return probe
 
 def ddp_setup(rank, world_size):

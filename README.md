@@ -14,6 +14,7 @@ Usage
 1. cd into 'OOD' directory
 2. modify the args.json file to set the desired parameters for training
 3. run the following command to train the backbone model and/or probes:
+
 ```bash
 python main.py --args_file args.json
 ```
