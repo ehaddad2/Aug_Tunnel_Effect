@@ -28,7 +28,7 @@ random.seed(SEED)
 np.random.seed(SEED)
 
 def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer, 
-               img_dims, lr, label_smoothing, epochs, batch_size, cuda_devices=[0]):
+               img_dims, lr, label_smoothing, epochs, batch_size, cuda_devices=[0], save=False):
     """
     Worker for cpu training or if cuda available, can train DP model
     """
@@ -50,13 +50,14 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_
         epochs,
         device)
     
-    Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(probe.state_dict(), probe_pth)
+    if save:
+        Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(probe.state_dict(), probe_pth)
     return train_res
         
         
 def ddp_worker(rank, world_size, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer, 
-            img_dims, lr, label_smoothing, epochs, batch_size, ret):
+            img_dims, lr, label_smoothing, epochs, batch_size, ret, save=False):
     """
     worker for cuda DDP
     """
@@ -82,15 +83,16 @@ def ddp_worker(rank, world_size, num_workers, dataset_base_pth, dataset_name, ba
         rank)
 
     if rank == 0:
-        Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
-        torch.save(ddp_model.module.state_dict(), probe_pth)
+        if save:
+            Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
+            torch.save(probe.state_dict(), probe_pth)
         ret[0] = train_res
     
     dist.destroy_process_group()
 
 
 def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer,
-                img_dims, lr, label_smoothing, epochs, batch_size, ret):
+                img_dims, lr, label_smoothing, epochs, batch_size, ret, save=False):
     """
     worker for tpu/xla training
     """
@@ -148,8 +150,9 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
         device)
     
     if xm.is_master_ordinal():
-        Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
-        xm.save(model.state_dict(), probe_pth)
+        if save:
+            Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
+            xm.save(model.state_dict(), probe_pth)
         ret[0] = train_res
     
     xm.rendezvous('training_finished')

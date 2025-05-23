@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--backbone_dataset_name", type=str, required=True, help="Name of the dataset.")
     parser.add_argument("--backbone_architecture", type=str, required=True, help="Model architecture.")
     parser.add_argument("--backbone_pth", type=str, required=True, help="Path to the backbone model.")
-    parser.add_argument("--backbone_manual_aug_setting", nargs="+", required=True, help="Backbone manual aug binary array.")
+    parser.add_argument("--backbone_man_aug_setting", nargs="+", required=True, help="Backbone manual aug binary array.")
     parser.add_argument("--backbone_batch_size", type=int, default=512, help="Batch size for training.")
     parser.add_argument("--backbone_lr", type=float, default=0.01, help="Learning rate for optimizer.")
     parser.add_argument("--backbone_wd", type=float, default=0.01, help="Learning rate for optimizer.")
@@ -379,4 +379,7 @@ if __name__ == '__main__':
         
             analysis.summarize_probe_experiments(run_id, probe_csv_path, args.backbone_architecture, args.backbone_man_aug_setting, 
                                             args.img_dims, id_class_count, len(probe_layers), backbone_acc, args.probe_architecture, r, rho, A)
+            
+
+    if args.use_wandb: wandb.finish()
     
