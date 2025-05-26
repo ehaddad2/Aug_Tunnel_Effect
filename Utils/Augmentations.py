@@ -1,6 +1,10 @@
+
 import torchvision.transforms as Transforms
 import torch.nn as nn
-import torchvision.transforms.v2 as TransformsV2
+try:
+    import torchvision.transforms.v2 as TransformsV2
+except ImportError:
+    pass
 import random
 import numpy as np
 from torch.utils.data import Dataset

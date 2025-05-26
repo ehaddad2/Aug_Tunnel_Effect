@@ -291,12 +291,16 @@ def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, max
     return df
 
 
-def summarize_probe_experiments(backbone_run_name, save_pth, man_augs,r, rho, A):
-    
-    row = [backbone_run_name, r, rho, A] + man_augs 
-    columns = ["Backbone Run Name", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
+def summarize_probe_experiments(wandb, backbone_run_name, dataset, man_augs, r, rho, A, save_pth="./csv_results/Probes.csv"):
+    os.makedirs(os.path.dirname(save_pth), exist_ok=True)
+    row = [backbone_run_name, dataset, r, rho, A] + man_augs 
+    columns = ["Run Name", "Dataset", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
 
-    if save_pth.exists():
+    if wandb.run is not None: #log to wandb
+        table = wandb.Table(data=[row], columns=columns)
+        wandb.log({"Probe Summary": table})
+
+    if os.path.exists(save_pth): #concat if we already have a table
         df = pd.read_csv(save_pth)
         new_row = pd.DataFrame([row], columns=columns)
         df = pd.concat([df, new_row], ignore_index=True)

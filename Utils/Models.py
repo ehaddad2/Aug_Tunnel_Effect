@@ -123,9 +123,9 @@ class BackboneModel:
     
     def load_backbone(self, path, architecture, num_classes):
         """Loads a pretrained backbone from a model dict"""
-        skeleton = self.get_model(architecture, num_classes)
-        skeleton.load_state_dict(torch.load(path))
-        return skeleton
+        backbone = self.get_model(architecture, num_classes)
+        backbone.load_state_dict(torch.load(path, map_location='cpu'))
+        return backbone
 
 
     def get_model(self, architecture, num_classes):

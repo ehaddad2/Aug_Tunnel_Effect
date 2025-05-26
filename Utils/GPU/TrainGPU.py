@@ -11,8 +11,6 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch.distributed as dist
 from Utils import Augmentations
-import numpy as np
-import time 
 
 SEED = 30
 def dist_training():
@@ -41,23 +39,13 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
     cutmix_a, mixup_a = dataloader.dataset.cutmix_alpha, dataloader.dataset.mixup_alpha
     
-    # Initialize timing variables
-    data_loading_time = 0
-    forward_time = 0
-    backward_time = 0
-    optimizer_time = 0
-    
     if rank == 0: pbar=tqdm(total=len(dataloader), desc=f'Training Epoch {ep}', leave=True)
     
-    start_time = time.time()
     for batch_idx, (X, y) in enumerate(dataloader):
-        data_load_end = time.time()
-        data_loading_time += data_load_end - start_time
         
         optimizer.zero_grad()
         X, y = X.to(device), y.to(device)
 
-        forward_start = time.time()
         """Apply cutmix/mixup"""
         if cutmix_a > 0:
             X_cm, y_1, y_2, lam = Augmentations.cutmix(X, y, cutmix_a, device)
@@ -76,21 +64,10 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
             outputs = model(X)
             loss = loss_fn(outputs, y)
         
-        forward_end = time.time()
-        forward_time += forward_end - forward_start
-            
         pred = outputs.argmax(dim=1)
         ep_loss += loss.item()
-        
-        backward_start = time.time()
         loss.backward()
-        backward_end = time.time()
-        backward_time += backward_end - backward_start
-        
-        optimizer_start = time.time()
         optimizer.step()
-        optimizer_end = time.time()
-        optimizer_time += optimizer_end - optimizer_start
         
         acc = pred.eq(y.view_as(pred)).sum()
         ep_acc += acc.item()
@@ -101,25 +78,12 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
                 'Train Loss': f'{loss:.4f}',
                 'Train Accuracy': f'{ep_acc/N:.4f}'})
             pbar.update(1)
-        
-        start_time = time.time()  # Start timing the next data loading
     
-    if rank == 0: 
-        pbar.close()
-        print(f"Epoch {ep} timing breakdown:")
-        print(f"  Data loading time: {data_loading_time:.3f}s")
-        print(f"  Forward pass time: {forward_time:.3f}s")
-        print(f"  Backward pass time: {backward_time:.3f}s")
-        print(f"  Optimizer step time: {optimizer_time:.3f}s")
-        total_time = data_loading_time + forward_time + backward_time + optimizer_time
-        print(f"  Total measured time: {total_time:.3f}s")
-        print(f"  Data loading: {data_loading_time/total_time*100:.1f}%, Forward: {forward_time/total_time*100:.1f}%, "
-              f"Backward: {backward_time/total_time*100:.1f}%, Optimizer: {optimizer_time/total_time*100:.1f}%")
-    
+    if rank == 0: pbar.close()
+
     ep_loss /= len(dataloader)
     ep_acc = ep_acc / N * 100
     
-    return float(ep_acc), ep_loss
     return float(ep_acc), ep_loss
 
 def test_step(model: nn.Module, dataloader: DataLoader, ep:int, loss_fn: nn.Module, device: torch.device) -> Tuple[float, float]:
