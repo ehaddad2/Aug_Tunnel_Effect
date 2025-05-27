@@ -39,7 +39,7 @@ def train_step(model, dataloader, ep, loss_fn, optimizer, device: torch.device) 
     model.train()
     acc, loss, ep_acc, ep_loss, N = 0, 0, 0, 0, 0
     rank = xm.get_ordinal()
-    n_classes, mixup_a, cutmix_a = dataloader._loader.dataset.num_classes, dataloader._loader.dataset.mixup_alpha, dataloader._loader.dataset.cutmix_alpha
+    mixup_a, cutmix_a  = getattr(dataloader._loader.dataset, 'mixup_alpha', 0.0), getattr(dataloader._loader.dataset, 'cutmix_alpha',  0.0)
     if xm.is_master_ordinal(): pbar = tqdm(total=len(dataloader), desc=f'Training Epoch {ep}')
 
     for batch_idx, (X, y) in enumerate(dataloader):
