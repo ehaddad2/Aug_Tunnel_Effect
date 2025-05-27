@@ -37,7 +37,7 @@ def train_step(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader, 
     model.train()
     acc, loss, ep_acc, ep_loss, N = 0, 0, 0, 0, 0
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    cutmix_a, mixup_a = dataloader.dataset.cutmix_alpha, dataloader.dataset.mixup_alpha
+    cutmix_a, mixup_a = getattr(dataloader.dataset, 'cutmix_alpha', 0.0), getattr(dataloader.dataset, 'mixup_alpha', 0.0)
     
     if rank == 0: pbar=tqdm(total=len(dataloader), desc=f'Training Epoch {ep}', leave=True)
     
