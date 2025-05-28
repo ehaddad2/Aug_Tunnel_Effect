@@ -202,3 +202,23 @@ effective LR = base LR x (chosen batch size / 512)
 
 ## Layer-Wise Probing Experiment Details & Progress
 
+
+### Probe Hyperparams
+1. CNN:
+LR: 0.001
+B: 128
+Label Smoothing: 0.1
+Ep: 30
+
+2. ViT:
+LR: 0.01
+WD: 0.0001
+B: 512
+Label Smoothing: 0.1
+Ep: 30
+
+
+backbone -> [9 datasets (1 ID, 8 OOD)]
+
+
+19 min/layer IN on tpu, 17 CNN layers => 5.3h
