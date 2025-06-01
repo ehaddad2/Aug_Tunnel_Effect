@@ -27,17 +27,17 @@ torch.manual_seed(SEED)
 random.seed(SEED)
 np.random.seed(SEED)
 
-def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer, 
+def cpu_worker(device, num_workers, train_dataset, test_dataset, num_classes, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_arch, probe_layer, 
                img_dims, lr, label_smoothing, epochs, batch_size, cuda_devices=[0], save=False):
     """
     Worker for cpu training or if cuda available, can train DP model
     """
+    probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer)
 
-    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, True)
     train_loader = DataLoader(train_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     test_loader = DataLoader(test_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-    probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer).to(device)
+
     if torch.cuda.is_available(): probe = nn.DataParallel(probe, device_ids=cuda_devices)
     probe.to(device)
     opt = torch.optim.AdamW(probe.parameters(), lr=lr, weight_decay=0.05)
@@ -51,25 +51,23 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, backbone_ds_
         device)
     
     if save:
-        Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
-        torch.save(probe.state_dict(), probe_pth)
+        raise NotImplementedError("No Probe Saving Supported")
     return train_res
         
         
-def ddp_worker(rank, world_size, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer, 
+def ddp_worker(rank, world_size, num_workers, train_dataset, test_dataset, num_classes, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_arch, probe_layer, 
             img_dims, lr, label_smoothing, epochs, batch_size, ret, save=False):
     """
     worker for cuda DDP
     """
     ddp_setup(rank, world_size)
-    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, rank==0)
     probe = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer).to(rank)
     ddp_model = DDP(probe, device_ids=[rank], find_unused_parameters=True)
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED)
     test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, seed=SEED)
-    train_loader = DataLoader(train_dataset, batch_size, sampler=train_sampler, num_workers=num_workers, pin_memory=True, persistent_workers=True)
-    test_loader = DataLoader(test_dataset, batch_size, sampler=test_sampler, num_workers=num_workers, pin_memory=True, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size, sampler=train_sampler, num_workers=num_workers, pin_memory=False, persistent_workers=True)
+    test_loader = DataLoader(test_dataset, batch_size, sampler=test_sampler, num_workers=num_workers, pin_memory=False, persistent_workers=True)
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing).to(rank)
     opt = torch.optim.AdamW(ddp_model.parameters(), lr=lr, weight_decay=0.05)
 
@@ -84,14 +82,13 @@ def ddp_worker(rank, world_size, num_workers, dataset_base_pth, dataset_name, ba
 
     if rank == 0:
         if save:
-            Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
-            torch.save(probe.state_dict(), probe_pth)
+            raise NotImplementedError("No Probe Saving Supported")
         ret[0] = train_res
     
     dist.destroy_process_group()
 
 
-def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_pth, probe_arch, probe_layer,
+def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_arch, probe_layer,
                 img_dims, lr, label_smoothing, epochs, batch_size, ret, save=False):
     """
     worker for tpu/xla training
@@ -138,7 +135,6 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
     
-    if xm.is_master_ordinal(): Models.print_model(model)
     train_res = TrainTPU.train(
         model,
         train_loader,
@@ -151,8 +147,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
     
     if xm.is_master_ordinal():
         if save:
-            Path(probe_pth).parent.mkdir(parents=True, exist_ok=True)
-            xm.save(model.state_dict(), probe_pth)
+            raise NotImplementedError("No Probe Saving Supported")
         ret[0] = train_res
     
     xm.rendezvous('training_finished')
@@ -162,10 +157,16 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
 Helper Functions |
 -----------------|
 """
-def prep_data(dataset_name, img_dims, dataset_base_pth, verbose=False):
-    mean, std = Augmentations.get_mean_std(dataset_name)
-    T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
-    train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, seed=SEED, verbose=verbose)
+def prep_data(dataset_name, img_dims, dataset_base_pth, fake=False, fake_size=1000, subset_frac=1, cache_frac=0, verbose=False):
+    train_dataset, test_dataset, num_classes = None, None, 0
+
+    if fake:
+        num_classes=10
+        train_dataset, test_dataset = CustomDatasets.fake_dataset(fake_size, img_dims, num_classes, SEED)
+    else:
+        mean, std = Augmentations.get_mean_std(dataset_name)
+        T = Augmentations.get_transformations(mean, std, aug_array=[0] * 14, img_dims=(img_dims, img_dims), verbose="Probe Train/Test" if verbose else None)
+        train_dataset, test_dataset, num_classes = CustomDatasets.load_dataset(dataset_name, dataset_base_pth, T, T, seed=SEED, verbose=verbose, subset_frac=subset_frac, cache_frac=cache_frac)
     return train_dataset, test_dataset, num_classes
 
 def initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer):# TODO: support probe_arch
@@ -176,8 +177,9 @@ def initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone
     probe = None
     if ('resnet' in backbone_arch) or ('vgg' in backbone_arch):
         probe = Models.CNNProbe(backbone, probe_layer, num_classes, img_dims)
+        print(probe)
     elif 'vit' in backbone_arch:
-        probe = Models.ViTProbe(backbone, probe_layer, num_classes)
+        probe = Models.ViTHookProbe(backbone, probe_layer, num_classes)
 
     if not probe: raise NotImplementedError(f"Probe model not created for dataset {dataset_name} at layer {probe_layer} -- \nProbing for backbone architecture \"{backbone_arch}\" isn't supported")
     

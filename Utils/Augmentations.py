@@ -44,29 +44,6 @@ idx_to_man_aug = {
 """
 Helper funcs/classes
 """
-    
-class ManualAugDataset(Dataset):
-    def __init__(self, dataset, transform=None, cutmix_alpha=0.0, mixup_alpha=0.0, num_classes=10):
-        """
-        Args:
-            dataset: the base dataset
-            mixup_alpha: parameter for mixup (set to 0 to disable)
-            cutmux_alpha: parameter for cutmix (set to 0 to disable)
-            num_classes: number of classes (for one-hot encoding labels)
-        """
-        self.dataset = dataset
-        self.transform = transform
-        self.mixup_alpha = mixup_alpha
-        self.cutmix_alpha = cutmix_alpha
-        self.num_classes = num_classes
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, index):
-        x1, y1 = self.dataset[index]
-        if self.transform: x1 = self.transform(x1)
-        return x1,y1
 
 #should only be called with batched data
 def mixup(X, y, alpha, device):
@@ -201,12 +178,7 @@ def get_mean_std(dataset_name:str):
     elif 'imagenet' in dataset_name: mean,std = [0.482, 0.458, 0.408], [0.269, 0.261, 0.276]
     return mean,std
 
-def custom(dataset, transforms, num_classes, cutmix_alpha=0, mixup_alpha=0) -> Dataset:
-    if not isinstance(transforms, Transforms.Compose): 
-        composed = Transforms.Compose(*transforms) if len(transforms)>0 else None
-    else: composed = transforms
-    return ManualAugDataset(dataset, composed, cutmix_alpha, mixup_alpha, num_classes)
-    
+
 def color_distortion(brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2): #based on https://arxiv.org/pdf/2006.09882
     color_jitter = Transforms.ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
     rnd_color_jitter = RandomApply(color_jitter, p=0.8)

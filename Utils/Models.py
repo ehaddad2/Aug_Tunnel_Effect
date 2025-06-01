@@ -134,7 +134,7 @@ class BackboneModel:
         model = self.model_architectures[architecture.lower()](num_classes)
         return model
     
-class CNNProbe(nn.Module):
+class CNNHookProbe(nn.Module):
     def __init__(self, backbone, probe_layer, num_classes, img_dims):
         super().__init__()
         self.backbone = backbone
@@ -184,7 +184,7 @@ class CNNProbe(nn.Module):
         x = self.classifier(x)
         return x
     
-class ViTProbe(nn.Module):
+class ViTHookProbe(nn.Module):
     def __init__(self, backbone, probe_layer, num_classes):
         super().__init__()
         self.backbone = backbone
@@ -219,6 +219,243 @@ class ViTProbe(nn.Module):
         return self.classifier(self.probe_features)
     
 
+class CNNProbe(nn.Module):
+    """
+    sequential-based CNN probe
+    """
+    def __init__(self, backbone, probe_layer, num_classes, img_dims):
+        super().__init__()
+        self.backbone = backbone
+        self.probe_layer = probe_layer
+        self.num_classes = num_classes
+        self.img_dims = img_dims
+        
+        #prepare backbone
+        if hasattr(self.backbone, 'classifier'): 
+            self.backbone.classifier = nn.Identity()
+        elif hasattr(self.backbone, 'fc'): 
+            self.backbone.fc = nn.Identity()
+        
+        self.backbone.eval()
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        
+        #build probe
+        self.feature_extractor = self._create_feature_extractor()
+        self._setup_classifier()
+    
+    def _create_feature_extractor(self):
+        """create sequential feature extractor up to probe layer"""
+        
+        if hasattr(self.backbone, 'conv1'): #resnet
+            return self._create_resnet_extractor()
+        
+        elif hasattr(self.backbone, 'features'): #vgg
+            return self._create_vgg_extractor()
+        
+        else:
+            raise ValueError(f"Unsupported backbone architecture used for CNN probing: {self.backbone}")
+    
+    def _create_resnet_extractor(self):
+        """Create ResNet feature extractor"""
+        layers = []
+        
+        if self.probe_layer == "conv1":
+            layers.append(self.backbone.conv1)
+            return nn.Sequential(*layers)
+        
+        layers.extend([ #backbone prologue
+            self.backbone.conv1,
+            self.backbone.bn1,
+            self.backbone.relu,
+            self.backbone.maxpool
+        ])
+        
+        #unpack 'layer' set
+        if "layer" in self.probe_layer:
+            parts = self.probe_layer.split('.')
+            layer_name, block_idx, conv_name = parts[0], int(parts[1]), parts[2]
+            layer_names = ['layer1', 'layer2', 'layer3', 'layer4']
+            target_layer_idx = int(layer_name[len(layer_name)-1])-1
+            
+            for i in range(target_layer_idx): #add previous layers
+                if hasattr(self.backbone, layer_names[i]):
+                    layers.append(getattr(self.backbone, layer_names[i]))
+            
+            #add layer block components
+            if hasattr(self.backbone, layer_name):
+                target_layer = getattr(self.backbone, layer_name)
+                
+                for i in range(block_idx): #add previous blocks
+                    layers.append(target_layer[i])
+                
+                #add in remaining (partial) block
+                target_block = target_layer[block_idx]
+                if conv_name == "conv1":
+                        layers.append(target_block.conv1)
+                elif conv_name == "conv2":
+                    layers.extend([
+                        target_block.conv1,
+                        target_block.bn1,
+                        target_block.relu,
+                        target_block.conv2
+                    ])
+
+            else:
+                raise ModuleNotFoundError(f"CNN PROBE ERROR: {layer_name} not found in backbone!")
+        return nn.Sequential(*layers)
+    
+    def _create_vgg_extractor(self):
+        target_idx = int(self.probe_layer.split('.')[-1])
+        feature_layers = list(self.backbone.features.children())
+        layers = feature_layers[:target_idx + 1]
+        return nn.Sequential(*layers)
+
+    
+    def _setup_classifier(self):
+        """connect feature extractor with probe head"""
+
+        with torch.no_grad():
+            dummy_input = torch.randn(1, 3, self.img_dims, self.img_dims)
+            if next(self.backbone.parameters()).is_cuda:
+                dummy_input = dummy_input.cuda()
+            
+            features = self.feature_extractor(dummy_input)
+            
+            if len(features.shape) == 4:  #feature shape: [B, C, H, W], ie: we only attach probe after conv layers
+                pooled = nn.AdaptiveAvgPool2d((2, 2))(features)
+                flattened_size = pooled.view(pooled.size(0), -1).shape[1]
+
+            else:
+                raise ValueError(f"Unexpected feature shape: {features.shape}")
+        
+        #construct probe head
+        classifier = nn.Linear(flattened_size, self.num_classes)
+        classifier.weight.data.normal_(mean=0, std=0.01)
+        classifier.bias.data.zero_()
+
+        self.probe_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d((2, 2)),
+            nn.Flatten(),
+            classifier
+        )
+    
+    def forward(self, x):
+        # Extract features
+        features = self.feature_extractor(x)
+        output = self.probe_head(features)
+        return output
+
+
+class ViTProbe(nn.Module):
+    """
+    Sequential-based ViT probe that applies GAP to patch tokens at each layer
+    """
+    def __init__(self, backbone, probe_layer, num_classes):
+        super().__init__()
+        self.backbone = backbone
+        self.probe_layer = probe_layer
+        self.num_classes = num_classes
+        
+        # Prep backbone
+        if hasattr(self.backbone, 'head'):
+            self.backbone.head = nn.Identity()
+        
+        self.backbone.eval()
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        
+        # Create feature extractor
+        self.feature_extractor = self._create_feature_extractor()
+        
+        # Attach probe head
+        self._setup_classifier()
+    
+    def _create_feature_extractor(self):
+        """Create ViT feature extractor up to specified layer"""
+        layers = []
+        
+        # Always include patch embedding
+        layers.append(self.backbone.patch_embed)
+        
+        if self.probe_layer == "patch_embed":
+            return ViTFeatureExtractor(layers, self.backbone.pos_embed, 
+                                     self.backbone.cls_token, self.backbone.pos_drop)
+        
+        # Add transformer blocks
+        if "blocks." in self.probe_layer:
+            target_block_idx = int(self.probe_layer.split('.')[-1])
+            
+            # Add blocks up to and including target block
+            for i in range(target_block_idx + 1):
+                if i < len(self.backbone.blocks):
+                    layers.append(self.backbone.blocks[i])
+        
+        elif self.probe_layer == "norm":
+            # Add all blocks plus norm
+            layers.extend(list(self.backbone.blocks))
+            layers.append(self.backbone.norm)
+        
+        return ViTFeatureExtractor(layers, self.backbone.pos_embed, 
+                                 self.backbone.cls_token, self.backbone.pos_drop)
+    
+    def _setup_classifier(self):
+        """Setup classifier for ViT features"""
+        # ViT features are typically embed_dim size after global average pooling
+        feature_size = self.backbone.embed_dim
+        self.classifier = nn.Linear(feature_size, self.num_classes)
+        self.classifier.weight.data.normal_(mean=0, std=0.01)
+        self.classifier.bias.data.zero_()
+    
+    def forward(self, x):
+        # Extract features - returns [B, embed_dim] after GAP over patch tokens
+        features = self.feature_extractor(x)
+        
+        # Classify
+        output = self.classifier(features)
+        return output
+
+
+class ViTFeatureExtractor(nn.Module):
+    """Helper class to handle ViT feature extraction with proper GAP at each layer"""
+    def __init__(self, layers, pos_embed, cls_token, pos_drop):
+        super().__init__()
+        self.layers = nn.ModuleList(layers)
+        self.pos_embed = pos_embed
+        self.cls_token = cls_token
+        self.pos_drop = pos_drop
+    
+    def forward(self, x):
+        B = x.shape[0]
+        
+        # Patch embedding (first layer)
+        x = self.layers[0](x)  # [B, N, embed_dim] where N is number of patches
+        
+        # If we're only probing patch_embed, apply GAP immediately
+        if len(self.layers) == 1:
+            # For patch_embed layer, we have patch tokens without cls token
+            # Apply GAP directly to patch tokens
+            return x.mean(dim=1)  # [B, embed_dim]
+        
+        # Add class token for transformer blocks
+        cls_tokens = self.cls_token.expand(B, -1, -1)  # [B, 1, embed_dim]
+        x = torch.cat((cls_tokens, x), dim=1)  # [B, 1+N, embed_dim]
+        
+        # Add positional embedding
+        x = x + self.pos_embed
+        x = self.pos_drop(x)
+        
+        # Apply remaining transformer blocks
+        for layer in self.layers[1:]:
+            x = layer(x)
+        
+        # Apply GAP to patch tokens (exclude cls token at index 0)
+        # x shape: [B, 1+N, embed_dim] where first token is cls token
+        patch_tokens = x[:, 1:, :]  # [B, N, embed_dim] - exclude cls token
+        features = patch_tokens.mean(dim=1)  # [B, embed_dim] - GAP over patch dimension
+        
+        return features
+
 """
 Helper classes & Functions
 """
@@ -238,125 +475,182 @@ def get_all_probe_layer_names(args):
     print(f"Warning: No predefined layers for architecture '{backbone_name}'. Using empty list.")
     return []
 
-if __name__ == '__main__':
-    import sys
+def test_probe_models():
+    """Test all probe models with different architectures and layers"""
+    print("="*80)
+    print("TESTING PROBE MODELS")
+    print("="*80)
+    
     # Test parameters
     img_dims = 224
     num_classes = 10
-    batch_size = 2
+    batch_size = 4
     
-    print("=== Testing Probe Model Creation for Multiple Architectures ===\n")
+    # Probe layer configurations
+    probe_configs = {
+        "resnet18": [
+            "conv1",
+            "layer1.0.conv1",
+            "layer1.0.conv2",
+            "layer1.1.conv1",
+            "layer1.1.conv2",
+            "layer2.0.conv1",
+            "layer2.0.conv2",
+            "layer2.1.conv1",
+            "layer2.1.conv2",
+            "layer3.0.conv1",
+            "layer3.0.conv2",
+            "layer3.1.conv1",
+            "layer3.1.conv2",
+            "layer4.0.conv1",
+            "layer4.0.conv2",
+            "layer4.1.conv1",
+            "layer4.1.conv2"
+        ],
+        "vgg19": [
+            "features.0",
+            "features.3",
+            "features.7",
+            "features.10",
+            "features.14",
+            "features.17",
+            "features.20",
+            "features.23",
+            "features.27",
+            "features.30",
+            "features.33",
+            "features.36",
+            "features.40",
+            "features.43",
+            "features.46",
+            "features.49"
+        ],
+        "vit_tiny": [
+            "patch_embed",
+            "blocks.0",
+            "blocks.1",
+            "blocks.2",
+            "blocks.3",
+            "blocks.4",
+            "blocks.5",
+
+        ]
+    }
     
     # Create dummy input
     dummy_input = torch.randn(batch_size, 3, img_dims, img_dims)
-    
-    # 1. Test with ResNet18
-    print("1. Testing ResNet18 Probing")
     backbone_model = BackboneModel()
-    resnet = backbone_model.resnet18(num_classes=num_classes)
     
-    # Define layers to probe for ResNet18
-    resnet_probe_layers = [
-        "conv1",
-        "layer1.0.conv1",
-        "layer1.0.conv2",
-        "layer1.1.conv1",
-        "layer1.1.conv2",
-        "layer2.0.conv1",
-        "layer2.0.conv2",
-        "layer2.1.conv1",
-        "layer2.1.conv2",
-        "layer3.0.conv1",
-        "layer3.0.conv2",
-        "layer3.1.conv1",
-        "layer3.1.conv2",
-        "layer4.0.conv1",
-        "layer4.0.conv2",
-        "layer4.1.conv1",
-        "layer4.1.conv2"
-    ]
-    
-    print(f"\nTesting {len(resnet_probe_layers)} ResNet18 layers:")
-    for layer in resnet_probe_layers:
+    # Test each architecture
+    for arch_name, probe_layers in probe_configs.items():
+        print(f"\n{'='*20} TESTING {arch_name.upper()} {'='*20}")
+        
         try:
-            probe_model = CNNProbe(resnet, layer, num_classes, img_dims)
+            # Create backbone
+            backbone = backbone_model.get_model(arch_name, num_classes)
             
-            # Test forward pass
-            with torch.no_grad():
-                output = probe_model(dummy_input)
+            # Test each probe layer
+            successful_layers = []
+            failed_layers = []
             
-            print(f"  ✓ Layer '{layer}' - Output shape: {output.shape}")
+            for layer in probe_layers:
+                try:
+                    print(f"\nTesting layer: {layer}")
+                    
+                    # Create appropriate probe
+                    if arch_name.startswith('vit'):
+                        probe = ViTProbe(backbone, layer, num_classes)
+                        print(f"Probe for layer {layer}: {probe}")
+                    else:
+                        probe = CNNProbe(backbone, layer, num_classes, img_dims)
+                    
+                    
+                    # Test forward pass
+                    with torch.no_grad():
+                        output = probe(dummy_input)
+                    
+                    # Verify output shape
+                    expected_shape = (batch_size, num_classes)
+                    if output.shape == expected_shape:
+                        print(f"  ✓ SUCCESS - Output shape: {output.shape}")
+                        successful_layers.append(layer)
+                    else:
+                        print(f"  ✗ SHAPE MISMATCH - Expected: {expected_shape}, Got: {output.shape}")
+                        failed_layers.append(layer)
+                        
+                except Exception as e:
+                    print(f"  ✗ ERROR - {str(e)}")
+                    failed_layers.append(layer)
+            
+            # Summary for this architecture
+            print(f"\n{arch_name.upper()} SUMMARY:")
+            print(f"  Successful layers: {len(successful_layers)}/{len(probe_layers)}")
+            print(f"  Failed layers: {len(failed_layers)}")
+            
+            if failed_layers:
+                print(f"  Failed: {failed_layers}")
+            
         except Exception as e:
-            print(f"  ✗ Layer '{layer}' - Error: {e}")
+            print(f"ERROR creating {arch_name} backbone: {e}")
     
-    print("\n" + "="*80 + "\n")
-    
-    # 2. Test with VGG19
-    print("2. Testing VGG19 Probing")
-    vgg = backbone_model.vgg19(num_classes=num_classes)
+    print(f"\n{'='*80}")
+    print("TESTING COMPLETE")
+    print(f"{'='*80}")
 
-    # Define layers to probe for VGG19
-    vgg_probe_layers = [
-        "features.0",
-        "features.3",
-        "features.7",
-        "features.10",
-        "features.14",
-        "features.17",
-        "features.21",
-        "features.24",
-        "features.28",
-        "features.31"
-    ]
+
+def test_dataparallel_compatibility():
+    """Test DataParallel compatibility"""
+    print("\n" + "="*80)
+    print("TESTING DATAPARALLEL COMPATIBILITY")
+    print("="*80)
     
-    print(f"\nTesting {len(vgg_probe_layers)} VGG19 layers:")
-    for layer in vgg_probe_layers:
-        try:
-            probe_model = CNNProbe(vgg, layer, num_classes, img_dims)
-            
-            # Test forward pass
-            with torch.no_grad():
-                output = probe_model(dummy_input)
-            
-            print(f"  ✓ Layer '{layer}' - Output shape: {output.shape}")
-        except Exception as e:
-            print(f"  ✗ Layer '{layer}' - Error: {e}")
+    if not torch.cuda.is_available():
+        print("CUDA not available - skipping DataParallel test")
+        return
     
-    print("\n" + "="*80 + "\n")
+    if torch.cuda.device_count() < 2:
+        print("Less than 2 GPUs available - skipping DataParallel test")
+        return
     
-    # 3. Test with ViT-Tiny
-    print("3. Testing ViT-Tiny Probing")
-    vit = backbone_model.vit_tiny(num_classes=num_classes)
+    # Test parameters
+    img_dims = 224
+    num_classes = 10
+    batch_size = 8
     
-    # Define layers to probe for ViT-Tiny
-    vit_probe_layers = [
-        "patch_embed",
-        "blocks.0",
-        "blocks.1",
-        "blocks.2",
-        "blocks.3",
-        "blocks.4",
-        "blocks.5",
-        "blocks.6",
-        "blocks.7",
-        "blocks.8",
-        "blocks.9",
-        "blocks.10",
-        "blocks.11",
-        "norm"
-    ]
+    # Create backbone and probe
+    backbone_model = BackboneModel()
+    backbone = backbone_model.get_model("resnet18", num_classes)
     
-    print(f"\nTesting {len(vit_probe_layers)} ViT-Tiny layers:")
-    for layer in vit_probe_layers:
-        try:
-            probe_model = ViTProbe(vit, layer, num_classes)
-            
-            # Test forward pass
-            with torch.no_grad():
-                output = probe_model(dummy_input)
-            
-            print(f"  ✓ Layer '{layer}' - Output shape: {output.shape}")
-        except Exception as e:
-            print(f"  ✗ Layer '{layer}' - Error: {e}")
+    # Test CNNProbe with DataParallel
+    probe = CNNProbe(backbone, "layer1.0.conv1", num_classes, img_dims)
+    probe = nn.DataParallel(probe)
+    probe = probe.cuda()
     
-    print("\nProbe testing completed successfully!")
+    # Test forward pass
+    dummy_input = torch.randn(batch_size, 3, img_dims, img_dims).cuda()
+    
+    try:
+        with torch.no_grad():
+            output = probe(dummy_input)
+        print(f"✓ DataParallel CNNProbe SUCCESS - Output shape: {output.shape}")
+    except Exception as e:
+        print(f"✗ DataParallel CNNProbe FAILED - {e}")
+    
+    # Test ViTProbe with DataParallel
+    vit_backbone = backbone_model.get_model("vit_tiny", num_classes)
+    vit_probe = ViTProbe(vit_backbone, "blocks.0", num_classes)
+    vit_probe = nn.DataParallel(vit_probe)
+    vit_probe = vit_probe.cuda()
+    
+    try:
+        with torch.no_grad():
+            output = vit_probe(dummy_input)
+        print(f"✓ DataParallel ViTProbe SUCCESS - Output shape: {output.shape}")
+    except Exception as e:
+        print(f"✗ DataParallel ViTProbe FAILED - {e}")
+
+
+if __name__ == "__main__":
+    # Run tests
+    test_probe_models()
+    test_dataparallel_compatibility()

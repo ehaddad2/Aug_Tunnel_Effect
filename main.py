@@ -41,12 +41,10 @@ def parse_args():
     parser.add_argument("--backbone_label_smoothing", type=float, default=0.1, help="Label smoothing for targets.")
     parser.add_argument("--backbone_epochs", type=int, default=512, help="Number of training epochs.")
     parser.add_argument("--backbone_cuda_devices", nargs="+", type=int, default=[0,1], help="CUDA device IDs to use.")
-    parser.add_argument("--backbone_t1Max", type=int, default=1, help="Top-1 max test acc for continuing from checkpoint")
 
     # Probe arguments
     parser.add_argument("--probe_datasets_base_pth", type=str, required=False, default="./data/OOD/", help="Base path to probe data")
     parser.add_argument("--probe_datasets", nargs="+", default=["all"], help="List of OOD datasets to probe, or 'all' for all.")
-    parser.add_argument("--probe_pth", type=str, required=True, help="Base path to save the trained linear probe.")
     parser.add_argument("--probe_architecture", type=str, required=True, help="Probing architecture.")
     parser.add_argument("--probe_layers", nargs="+", required=True, help="Layers to probe on. Put 'all' to probe all layers.")
     parser.add_argument("--probe_batch_size", type=int, default=64, help="Batch size for training.")
@@ -58,7 +56,7 @@ def parse_args():
     # Shared arguments
     parser.add_argument("--use_wandb", type=bool, default=False, help="Enable Weights & Biases logging.")
     parser.add_argument("--run_ID", type=str, default=None, help="Run ID, if empty will be created automatically")
-    parser.add_argument("--run_name", type=str, default=None, help="Run name, if empty will be created automatically")
+    parser.add_argument("--run_name", type=str, default="", help="Run name, if empty will be created automatically")
     parser.add_argument("--run_ID_version", type=str, default="0", help="Run ID version (since deleted runs need a new one)")
     parser.add_argument("--use_ddp", type=bool, default=False, help="Train model on multiple GPUs using DDP paradigm")
     parser.add_argument("--use_tpu", type=bool, default=False, help="Set to true if training on TPUs") 
@@ -82,7 +80,7 @@ def extract_run_name(backbone_pth):
     model = path_parts[-3]
     dataset = path_parts[-2]
     mode = path_parts[-1].split(':')[-1].replace('.pth', '')
-    run_name = f"{model} + {dataset} + {mode}"
+    run_name = f"{model} + {dataset} + man aug {mode}"
     return run_name
 
 if __name__ == '__main__':
@@ -90,7 +88,7 @@ if __name__ == '__main__':
     device = None
     if not args.use_tpu: 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        mp.set_start_method('spawn', force=True)
+        mp.set_start_method('fork', force=True)
     print(f'\nDevice being used: ', device if device else 'TPU', '\n')
     
     run_id = f"backbone_{args.backbone_architecture}-{args.backbone_dataset_name}-man_aug_{encode_vector(args.backbone_man_aug_setting)}" if args.run_ID=="" else args.run_ID
@@ -199,7 +197,6 @@ if __name__ == '__main__':
         analysis.summarize_backbone_experiments(wandb, run_name, args.backbone_architecture, args.backbone_man_aug_setting, backbone_acc)
     else: 
         print(f"Backbone {args.backbone_pth} found, probing with this.")
-        backbone_acc = args.backbone_t1Max
 
     """
     -----------------|
@@ -211,9 +208,13 @@ if __name__ == '__main__':
     probe_layers = Models.get_all_probe_layer_names(args) if (args.probe_layers and str.lower(args.probe_layers[0]) == 'all') else args.probe_layers
     manager = Manager()
     for i in range(len(probing_datasets)):
-        probe_results[probing_datasets[i]] = []
+        ds_name = probing_datasets[i]
+        probe_results[ds_name] = []
+
+        #preload dataset, since no augs used
+        train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth, cache_frac=0.3)
+
         for j in range(len(probe_layers)):
-            full_probe_pth = args.probe_pth + "/" + args.backbone_architecture + "/" + args.backbone_dataset_name + "/" + "man_aug:" + str(encode_vector(args.backbone_man_aug_setting)) + "/" +  probing_datasets[i] + "/" + str(args.probe_architecture) + "/" + probe_layers[j] if probe_layers else probe_layers
             print(f'\nProbing dataset: {probing_datasets[i]} at probe layer: {probe_layers[j]}')
             probe_ret = None 
             if device:
@@ -221,12 +222,13 @@ if __name__ == '__main__':
                     probe_ret = probe.cpu_worker(
                         device,
                         args.loader_workers,
-                        args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth,
+                        train,
+                        test,
+                        n_classes,
                         probing_datasets[i],
                         args.backbone_dataset_name,
                         args.backbone_pth,
                         args.backbone_architecture,
-                        full_probe_pth,
                         args.probe_architecture,
                         probe_layers[j] if probe_layers else probe_layers,
                         args.img_dims,
@@ -238,15 +240,16 @@ if __name__ == '__main__':
 
                 elif ('cuda' in device.type) and args.use_ddp:
                     probe_ret = manager.dict()
-                    mp.spawn(probe.ddp_worker, args=(
+                    mp.start_processes(fn=probe.ddp_worker, args=(
                         len(args.probe_cuda_devices),
                         args.loader_workers,
-                        args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth,
+                        train,
+                        test,
+                        n_classes,
                         probing_datasets[i],
                         args.backbone_dataset_name,
                         args.backbone_pth,
                         args.backbone_architecture,
-                        full_probe_pth,
                         args.probe_architecture,
                         probe_layers[j] if probe_layers else probe_layers,
                         args.img_dims,
@@ -255,7 +258,7 @@ if __name__ == '__main__':
                         args.probe_epochs,
                         args.probe_batch_size,
                         probe_ret
-                    ), nprocs=len(args.probe_cuda_devices))
+                    ), nprocs=len(args.probe_cuda_devices), join=True)
 
                 else: raise NotImplementedError(f"Device type '{device.type}' is not supported.")
 
@@ -271,7 +274,6 @@ if __name__ == '__main__':
                         args.backbone_dataset_name,
                         args.backbone_pth,
                         args.backbone_architecture,
-                        full_probe_pth,
                         args.probe_architecture,
                         probe_layers[j] if probe_layers else probe_layers,
                         args.img_dims,
@@ -291,6 +293,17 @@ if __name__ == '__main__':
             else: 
                 print(f"No probing results for dataset {probing_datasets[i]} at layer {probe_layers[j]}")
             
+        #add in entry after probing dataset (as long as its not ID dataset)
+        ood_accs_list = []
+        probe_model = re.search(r'\d+', args.backbone_dataset_name)
+        id_class_count = int(probe_model.group())
+        id_layer_res = probe_results[args.backbone_dataset_name]
+        id_ds = probing_datasets[0]
+        if probing_datasets[i] == id_ds: continue
+        ood_layer_res = probe_results[probing_datasets[i]]
+        #print(f'ID layer res: {id_layer_res}\nOOD layer res: {ood_layer_res}')
+        r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, probing_datasets[i], id_class_count)
+        analysis.summarize_probe_experiments(wandb, extract_run_name(args.backbone_pth), probing_datasets[i], args.backbone_man_aug_setting, r, rho, A)
 
     print(f'\nProbed all datasets for backbone.')
 
@@ -313,6 +326,8 @@ if __name__ == '__main__':
                 ])  
                 wandb.log({"Run Results": wandb.Table(dataframe=df)})
     """
+
+    """
     print(f'Probe Results Dict: {probe_results}')
     
     if probe_results:
@@ -329,5 +344,6 @@ if __name__ == '__main__':
             r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_count)
             analysis.summarize_probe_experiments(wandb, extract_run_name(args.backbone_pth), ood_ds, args.backbone_man_aug_setting, r, rho, A)
             
+    """
     if args.use_wandb: wandb.finish()
     

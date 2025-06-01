@@ -2,17 +2,76 @@ import os
 import pandas as pd
 from torchvision.datasets.folder import default_loader
 from torchvision.datasets.utils import download_url
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, Subset, TensorDataset
 import torchvision.transforms as Transforms
 from torchvision import datasets
 import torch
 import torchvision
-import torchaudio
 import torchaudio.transforms as transforms
-from Utils import Augmentations
+from tqdm import tqdm
 from PIL import Image
 import librosa
+from torch.utils.data import Dataset
+import math
 
+def identity_collate(batch):
+    return batch
+
+class ManualAugDataset(Dataset):
+    def __init__(self, dataset, transform=None, cutmix_alpha=0.0, mixup_alpha=0.0, num_classes=10, subset_frac=1, cache_frac=0):
+        subset_size = int(subset_frac * len(dataset))
+        self.indices = list(range(subset_size))
+        self.dataset = Subset(dataset, self.indices)
+        self.transform = transform
+        self.cutmix_alpha = cutmix_alpha
+        self.mixup_alpha = mixup_alpha
+        self.num_classes = num_classes
+        self.cache_size = int(cache_frac * len(self.dataset))  # Convert to int here
+        self.cache_data = None
+        self.cache_labels = None
+
+        if self.cache_size > 0:  # Store samples in RAM cache of specified size
+            self.cache_data = [None] * self.cache_size
+            self.cache_labels = [None] * self.cache_size
+
+            print(f"Preloading {cache_frac*100:.1f}% of dataset to cache...")
+            loader = DataLoader(
+                self.dataset,
+                batch_size=256,
+                num_workers=12,
+                pin_memory=False,
+                collate_fn=identity_collate
+            )
+
+            idx = 0
+            for batch in tqdm(loader, total=math.ceil(self.cache_size/256)-1, desc="Caching"):
+                for x, y in batch:
+                    if idx >= self.cache_size:  # Fixed condition
+                        break
+                    if self.transform:
+                        x = self.transform(x)
+                    self.cache_data[idx] = x
+                    self.cache_labels[idx] = torch.tensor(y)
+                    idx += 1
+                
+                if idx >= self.cache_size:  # Break outer loop too
+                    break
+            
+            print("Preloading complete.")
+
+    def __getitem__(self, index):
+        if self.cache_size > 0 and index < self.cache_size:  # Check if index is within cache
+            return self.cache_data[index], self.cache_labels[index]
+        
+        # Fallback to original dataset
+        x, y = self.dataset[index]
+        if self.transform:
+            x = self.transform(x)
+        return x, torch.tensor(y)
+    
+    def __len__(self):
+        return len(self.dataset)
+    
 
 class Cub2011(Dataset):
     base_folder = 'CUB_200_2011/images'
@@ -159,44 +218,64 @@ class HAM10000Dataset(Dataset):
     def __len__(self):
         return len(self.data)
     
-def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha=0, mixup_alpha=0, seed = None, verbose=False): #loads in a dataset with initial transoformations
+
+def custom_dataset(dataset, transforms, num_classes, cutmix_alpha=0, mixup_alpha=0, subset_frac=1, cache_frac=0) -> Dataset:
+    if not isinstance(transforms, Transforms.Compose): 
+        composed = Transforms.Compose(*transforms) if len(transforms)>0 else None
+    else: composed = transforms
+    return ManualAugDataset(dataset, composed, cutmix_alpha, mixup_alpha, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
+
+def fake_dataset(size, img_dims, num_classes, seed=30):
+    ds = TensorDataset(torch.rand(size, 3, img_dims, img_dims), torch.randint(0, num_classes, (size,)))
+    lengths = [int(len(ds)*0.8), len(ds) - int(len(ds)*0.8)]
+    train, test = torch.utils.data.random_split(ds, lengths, generator=torch.Generator().manual_seed(seed)) 
+    return train, test
+
+def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha=0, mixup_alpha=0, seed = None, verbose=False, subset_frac=1, cache_frac=0): #loads in a dataset with initial transoformations
     dataset_name = str.lower(dataset_name)
     train,test,num_classes = None,None,0
 
     if dataset_name == 'cifar-10': 
-        train,test = datasets.CIFAR10(root=base_pth+'cifar-10',transform=train_T, download=True), datasets.CIFAR10(root=base_pth+'cifar-10', train=False, transform=test_T, download=True)
+        train,test = datasets.CIFAR10(root=base_pth+'cifar-10', download=True), datasets.CIFAR10(root=base_pth+'cifar-10', train=False, download=True)
         num_classes = len(train.classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'cifar-100': 
-        train,test = datasets.CIFAR100(root=base_pth+'cifar-100', transform=train_T, download=True), datasets.CIFAR100(root=base_pth+'cifar-100', train=False, transform=test_T, download=True)
+        train,test = datasets.CIFAR100(root=base_pth+'cifar-100', download=True), datasets.CIFAR100(root=base_pth+'cifar-100', train=False, download=True)
         num_classes = len(train.classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'flowers-102': 
-        train,test = datasets.Flowers102(root=base_pth, split='test', transform=test_T, download=True), torch.utils.data.ConcatDataset([datasets.Flowers102(root=base_pth+'flowers-102', split='train', transform=train_T, download=True), datasets.Flowers102(root=base_pth+'flowers-102', split='val', transform=train_T, download=True)])
+        test,train = datasets.Flowers102(root=base_pth, split='test', download=True), torch.utils.data.ConcatDataset([datasets.Flowers102(root=base_pth+'flowers-102', split='train', download=True), datasets.Flowers102(root=base_pth+'flowers-102', split='val', download=True)])
         num_classes = 102
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'stl-10': 
-        train,test = datasets.STL10(root=base_pth+'stl-10', split='test', transform=test_T, download=True), datasets.STL10(root=base_pth+'stl-10', split='train', transform=train_T, download=True)
+        test,train = datasets.STL10(root=base_pth+'stl-10', split='test', download=True), datasets.STL10(root=base_pth+'stl-10', split='train', download=True)
         num_classes = len(train.classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'aircrafts': 
-        train,test = datasets.FGVCAircraft(root=base_pth+'aircrafts', split='train', transform=train_T, download=True), datasets.FGVCAircraft(root=base_pth+'aircrafts', split='test', transform=test_T, download=True)
+        train,test = datasets.FGVCAircraft(root=base_pth+'aircrafts', split='train', download=True), datasets.FGVCAircraft(root=base_pth+'aircrafts', split='test', download=True)
         num_classes = len(train.classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'cub-200': 
-        train,test = Cub2011(root=base_pth+'cub-200', transform=train_T, download=True), Cub2011(root=base_pth+'cub-200', train=False, transform=test_T, download=True)
+        train,test = Cub2011(root=base_pth+'cub-200', download=True), Cub2011(root=base_pth+'cub-200', train=False, download=True)
         num_classes = 200
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'ninco': 
         dataset = torchvision.datasets.ImageFolder(base_pth+dataset_name)
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = len(dataset.classes)
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'oxford-pets':
-        train,test = datasets.OxfordIIITPet(root=base_pth+'oxford-pets', split='trainval', transform=train_T, download=True), Cub2011(root=base_pth+'oxford-pets', split='train', transform=train_T, download=True)
+        test,train = datasets.OxfordIIITPet(root=base_pth+'oxford-pets', split='trainval', download=True), Cub2011(root=base_pth+'oxford-pets', split='train', download=True)
         num_classes = 200
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'ham10000':
         ds1, ds2 = base_pth+dataset_name+'/p1', base_pth+dataset_name+'/p2'
         dataset = HAM10000Dataset(base_pth+dataset_name+'/metadata.csv',[ds1,ds2])
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = 7
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     elif dataset_name == 'esc-50':
         mel_transform = transforms.MelSpectrogram(sample_rate=44100, n_fft=2205,hop_length=441)
         ds_pth = base_pth+dataset_name
@@ -204,11 +283,11 @@ def load_dataset(dataset_name, base_pth, train_T = [], test_T = [], cutmix_alpha
         lengths = [int(len(dataset)*0.8), len(dataset) - int(len(dataset)*0.8)]
         num_classes = 50
         train, test = torch.utils.data.random_split(dataset, lengths, generator=torch.Generator().manual_seed(seed)) 
-        train,test = Augmentations.custom(train, train_T, num_classes), Augmentations.custom(test, test_T, num_classes)
+        train,test = custom_dataset(train, train_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
     else: 
         train, test = torchvision.datasets.ImageFolder(base_pth+dataset_name+'/train/'), torchvision.datasets.ImageFolder(base_pth+dataset_name+'/val/')
         num_classes = len(train.classes)
-        train,test = Augmentations.custom(train, train_T, num_classes, cutmix_alpha, mixup_alpha), Augmentations.custom(test, test_T, num_classes)
+        train,test = custom_dataset(train, train_T, num_classes, cutmix_alpha, mixup_alpha, subset_frac=subset_frac, cache_frac=cache_frac), custom_dataset(test, test_T, num_classes, subset_frac=subset_frac, cache_frac=cache_frac)
 
     if verbose: print('\ntrain length: ', len(train), 'test length: ', len(test), '\n')
     return train,test,num_classes

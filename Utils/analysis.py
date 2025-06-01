@@ -290,24 +290,23 @@ def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, max
     df.to_csv(save_pth, index=False)
     return df
 
-
 def summarize_probe_experiments(wandb, backbone_run_name, dataset, man_augs, r, rho, A, save_pth="./csv_results/Probes.csv"):
     os.makedirs(os.path.dirname(save_pth), exist_ok=True)
     row = [backbone_run_name, dataset, r, rho, A] + man_augs 
     columns = ["Run Name", "Dataset", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
 
-    if wandb.run is not None: #log to wandb
-        table = wandb.Table(data=[row], columns=columns)
-        wandb.log({"Probe Summary": table})
-
-    if os.path.exists(save_pth): #concat if we already have a table
+    if os.path.exists(save_pth):
         df = pd.read_csv(save_pth)
         new_row = pd.DataFrame([row], columns=columns)
         df = pd.concat([df, new_row], ignore_index=True)
     else:
         df = pd.DataFrame([row], columns=columns)
+    df.to_csv(save_pth, index=False)
 
-    df.to_csv(save_pth)
+    #log onto wandb
+    if wandb.run is not None:
+        table = wandb.Table(data=df, columns=columns)
+        wandb.log({"Probe Summary": table})
 
 def compute_overparam_val(backbone_name, dataset_pth, dataset_name):
     train, test, n_classes = CustomDatasets.load_dataset(dataset_name, dataset_pth, seed=SEED)
