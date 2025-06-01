@@ -13,6 +13,9 @@ from PIL import Image
 import librosa
 from torch.utils.data import Dataset
 import math
+import multiprocessing as mp
+import ctypes
+import numpy as np
 
 def identity_collate(batch):
     return batch
@@ -26,47 +29,37 @@ class ManualAugDataset(Dataset):
         self.cutmix_alpha = cutmix_alpha
         self.mixup_alpha = mixup_alpha
         self.num_classes = num_classes
-        self.cache_size = int(cache_frac * len(self.dataset))  # Convert to int here
-        self.cache_data = None
+        self.cache_size = int(cache_frac * len(self.dataset))
+        self.cache = None
         self.cache_labels = None
+        self.cache_ready = False
 
-        if self.cache_size > 0:  # Store samples in RAM cache of specified size
-            self.cache_data = [None] * self.cache_size
-            self.cache_labels = [None] * self.cache_size
+        if self.cache_size > 0:  #setup cache
+            c,h,w = 3,224,224 #for now, a default
+            shared_array_base = mp.Array(ctypes.c_float, self.cache_size*c*h*w)
+            shared_array = np.ctypeslib.as_array(shared_array_base.get_obj()).reshape(self.cache_size, c, h, w)
+            self.cache = torch.from_numpy(shared_array)
 
-            print(f"Preloading {cache_frac*100:.1f}% of dataset to cache...")
-            loader = DataLoader(
-                self.dataset,
-                batch_size=256,
-                num_workers=12,
-                pin_memory=False,
-                collate_fn=identity_collate
-            )
-
-            idx = 0
-            for batch in tqdm(loader, total=math.ceil(self.cache_size/256)-1, desc="Caching"):
-                for x, y in batch:
-                    if idx >= self.cache_size:  # Fixed condition
-                        break
-                    if self.transform:
-                        x = self.transform(x)
-                    self.cache_data[idx] = x
-                    self.cache_labels[idx] = torch.tensor(y)
-                    idx += 1
-                
-                if idx >= self.cache_size:  # Break outer loop too
-                    break
-            
-            print("Preloading complete.")
+            shared_labels_base = mp.Array(ctypes.c_long, self.cache_size)
+            shared_labels = np.ctypeslib.as_array(shared_labels_base.get_obj())
+            self.cache_labels = torch.from_numpy(shared_labels)
 
     def __getitem__(self, index):
-        if self.cache_size > 0 and index < self.cache_size:  # Check if index is within cache
-            return self.cache_data[index], self.cache_labels[index]
-        
-        # Fallback to original dataset
-        x, y = self.dataset[index]
-        if self.transform:
-            x = self.transform(x)
+        x, y = None,None
+        if self.cache_size and index in range(self.cache_size): #caching enabled and sample needs to be stored/accessed
+            if not self.cache_ready: #populate cache
+                x, y = self.dataset[index]
+                if self.transform: x = self.transform(x)
+                self.cache[index] = x
+                self.cache_labels[index] = y
+
+            else: #retrieve from cache
+                x, y = self.cache[index], self.cache_labels[index]
+
+        else: 
+            x, y = self.dataset[index]
+            if self.transform: x = self.transform(x)
+
         return x, torch.tensor(y)
     
     def __len__(self):
