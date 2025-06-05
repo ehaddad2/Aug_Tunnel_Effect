@@ -7,22 +7,18 @@ import torch
 import torch.nn as nn
 import random
 import math
-import torchvision.transforms as Transforms
-from PIL import Image, ImageFilter
 import numpy as np
 from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 import torch.multiprocessing as mp
 import tqdm
-from PIL import Image
 import matplotlib.pyplot as plt
 import argparse
 import matplotlib.pyplot as plt
-from torchvision.transforms.functional import to_pil_image
 from Utils import Augmentations
 from Utils import CustomDatasets
 import Utils.Models as Models
-import pandas as pd, re
+import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 import os
@@ -319,7 +315,6 @@ def compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_cou
     id_layer_res = np.array(id_layer_res)
     ood_layer_res = np.array(ood_layer_res)
     
-    # OOD dataset class counts.
     OOD_ds_class_cnt = {
         "aircrafts": 100,
         "cifar-10": 10,
@@ -330,8 +325,6 @@ def compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_cou
         "ham10000": 7,
         "esc-50": 50
     }
-    chance_acc_id = 1 / id_class_count if id_class_count else 1
-    chance_acc_ood = 1 / OOD_ds_class_cnt.get(ood_ds.lower(), 1)
     
     # % OOD Performance Retained.
     am = np.max(ood_layer_res)
@@ -342,8 +335,10 @@ def compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, ood_ds, id_class_cou
     rho, _ = pearsonr(id_layer_res, ood_layer_res)
     
     # ID/OOD Alignment.
-    alpha_id = id_layer_res[-1]
-    alpha_ood = ood_layer_res[-1]
+    chance_acc_id = 1 / id_class_count
+    chance_acc_ood = 1 / OOD_ds_class_cnt[ood_ds.lower()]
+    alpha_id = id_layer_res[-1]/100
+    alpha_ood = ood_layer_res[-1]/100
     A = (alpha_id - chance_acc_id) * (alpha_ood - chance_acc_ood)
     
     return r, rho, A

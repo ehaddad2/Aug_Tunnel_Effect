@@ -174,7 +174,7 @@ def train(model: nn.Module, train_dataloader: DataLoader, test_dataloader: DataL
                   f"test_acc: {test_acc:.4f} | "
                   f"max_test_acc: {max_test_acc:.4f}")
         setattr(train_dataloader.dataset, 'cache_ready', True)
-        setattr(train_dataloader.dataset, 'cache_ready', True)
+        setattr(test_dataloader.dataset, 'cache_ready', True)
 
     results["max_test_acc"] = max_test_acc
     return results
