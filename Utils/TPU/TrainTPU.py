@@ -154,6 +154,9 @@ def train(model, train_dataloader, test_dataloader, train_sampler, optimizer, lo
                   f"test_loss: {test_loss:.4f} | "
                   f"test_acc: {test_acc:.4f} | "
                   f"max_test_acc: {max_test_acc:.4f}")
+            
+        setattr(train_dataloader._loader.dataset, 'cache_ready', True)
+        setattr(test_dataloader._loader.dataset, 'cache_ready', True)
     
     results["max_test_acc"] = max_test_acc
     return results

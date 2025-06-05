@@ -44,6 +44,7 @@ class ManualAugDataset(Dataset):
             shared_labels = np.ctypeslib.as_array(shared_labels_base.get_obj())
             self.cache_labels = torch.from_numpy(shared_labels)
 
+            print(f'Prepared cache with shape: {self.cache.shape}')
     def __getitem__(self, index):
         x, y = None,None
         if self.cache_size and index in range(self.cache_size): #caching enabled and sample needs to be stored/accessed

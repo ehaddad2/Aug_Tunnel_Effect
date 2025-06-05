@@ -88,15 +88,13 @@ def ddp_worker(rank, world_size, num_workers, train_dataset, test_dataset, num_c
     dist.destroy_process_group()
 
 
-def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_arch, probe_layer,
+def tpu_worker(rank, num_workers, train_dataset, test_dataset, num_classes, dataset_name, backbone_ds_name, backbone_pth, backbone_arch, probe_arch, probe_layer,
                 img_dims, lr, label_smoothing, epochs, batch_size, ret, save=False):
     """
     worker for tpu/xla training
     """
     
     rank = xm.get_ordinal()
-    train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, dataset_base_pth, xm.is_master_ordinal())
-
     device = xm.xla_device()
     model = initialize_probe_model(dataset_name, num_classes, backbone_ds_name, backbone_pth, img_dims, backbone_arch, probe_arch, probe_layer).to(device)
     xm.broadcast_master_param(model)
@@ -117,15 +115,15 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, backbone_ds_na
         sampler=train_sampler,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=12,
+        num_workers=num_workers,
         persistent_workers=True,
-        prefetch_factor=6)
+        prefetch_factor=20)
     test_loader = DataLoader(
         test_dataset,
         sampler=test_sampler,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=12,
+        num_workers=num_workers,
         persistent_workers=True,
         prefetch_factor=2)
     

@@ -11,9 +11,11 @@ import pandas as pd
 import json
 from pathlib import Path
 import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 from torch.multiprocessing import Manager
 import pandas as pd, re
 import hashlib
+import csv
 
 
 SEED = 30
@@ -23,6 +25,17 @@ class LoadFromJSON(argparse.Action):
         json_args = json.load(values)
         for key, value in json_args.items():
             setattr(namespace, key, value)
+
+def log_probe_layer_results(ds_name, layers, id_res, ood_res, log_pth = Path("./csv_results/ProbeLayers.csv")): #log layerwise accs
+    log_pth.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not log_pth.exists()
+    with log_pth.open("a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(["dataset", "layer", "id_acc", "ood_acc"])
+        for layer, i_acc, o_acc in zip(layers, id_res, ood_res):
+            w.writerow([ds_name, layer, f"{i_acc:.4f}", f"{o_acc:.4f}"])
+        w.writerow([])    
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a backbone or linear probe model with specific settings.")
@@ -212,7 +225,7 @@ if __name__ == '__main__':
         probe_results[ds_name] = []
 
         #preload dataset, since no augs used
-        train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth, cache_frac=0.3)
+        train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth, cache_frac=0)
 
         for j in range(len(probe_layers)):
             print(f'\nProbing dataset: {probing_datasets[i]} at probe layer: {probe_layers[j]}')
@@ -269,7 +282,9 @@ if __name__ == '__main__':
                     probe_ret = manager.dict()
                     xmp.spawn(probe.tpu_worker, args=(
                         args.loader_workers,
-                        args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth,
+                        train,
+                        test,
+                        n_classes,
                         probing_datasets[i],
                         args.backbone_dataset_name,
                         args.backbone_pth,
@@ -301,7 +316,8 @@ if __name__ == '__main__':
         id_ds = probing_datasets[0]
         if probing_datasets[i] == id_ds: continue
         ood_layer_res = probe_results[probing_datasets[i]]
-        #print(f'ID layer res: {id_layer_res}\nOOD layer res: {ood_layer_res}')
+
+        log_probe_layer_results(probing_datasets[i], probe_layers, id_layer_res, ood_layer_res)
         r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, probing_datasets[i], id_class_count)
         analysis.summarize_probe_experiments(wandb, extract_run_name(args.backbone_pth), probing_datasets[i], args.backbone_man_aug_setting, r, rho, A)
 
