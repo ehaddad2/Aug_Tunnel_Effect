@@ -220,13 +220,26 @@ if __name__ == '__main__':
     probing_datasets = get_probe_dataset_names(args)
     probe_layers = Models.get_all_probe_layer_names(args) if (args.probe_layers and str.lower(args.probe_layers[0]) == 'all') else args.probe_layers
     manager = Manager()
+
+    # --Feature Extraction--
     for i in range(len(probing_datasets)):
         ds_name = probing_datasets[i]
         probe_results[ds_name] = []
 
-        #preload dataset, since no augs used
-        train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth, cache_frac=0)
-
+        #load ood dataset and backbone
+        train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth)
+        train_dataloader, test_dataloader = torch.utils.data.DataLoader(train, batch_size=args.probe_batch_size, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=args.probe_batch_size, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True)
+        backbone = Models.BackboneModel().load_backbone(args.backbone_pth, architecture=args.backbone_architecture, num_classes=100)
+        
+        #if we need: add in hooks, extract layerwise features, and save
+        if 'resnet' in args.backbone_architecture or 'vgg' in args.backbone_architecture: #CNN
+            Models.CNNFeatureExtractor(backbone, probe_layers).extract_features(train_dataloader, probing_datasets[i])
+        elif 'vit' in args.backbone_architecture: #vit
+            pass
+    
+    # --Probing With Extracted Features--
+    for i in range(len(probing_datasets)):
+        #run through each layer, attach probe head to saved features (stored in ds), and log probe training results
         for j in range(len(probe_layers)):
             print(f'\nProbing dataset: {probing_datasets[i]} at probe layer: {probe_layers[j]}')
             probe_ret = None 
