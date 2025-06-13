@@ -16,7 +16,7 @@ from torch.multiprocessing import Manager
 import pandas as pd, re
 import hashlib
 import csv
-
+from torch.utils.data import DataLoader
 
 SEED = 30
 
@@ -54,6 +54,7 @@ def parse_args():
     parser.add_argument("--backbone_label_smoothing", type=float, default=0.1, help="Label smoothing for targets.")
     parser.add_argument("--backbone_epochs", type=int, default=512, help="Number of training epochs.")
     parser.add_argument("--backbone_cuda_devices", nargs="+", type=int, default=[0,1], help="CUDA device IDs to use.")
+    parser.add_argument("--backbone_force_train", type=bool, required=False, default=False, help="Force backbone to continue training - good for ID acc verification.")
 
     # Probe arguments
     parser.add_argument("--probe_datasets_base_pth", type=str, required=False, default="./data/OOD/", help="Base path to probe data")
@@ -93,7 +94,7 @@ def extract_run_name(backbone_pth):
     model = path_parts[-3]
     dataset = path_parts[-2]
     mode = path_parts[-1].split(':')[-1].replace('.pth', '')
-    run_name = f"{model} + {dataset} + man aug {mode}"
+    run_name = f"{model} + {dataset} + {mode}"
     return run_name
 
 if __name__ == '__main__':
@@ -115,7 +116,7 @@ if __name__ == '__main__':
             name=run_name if (not args.run_name or args.run_name == "") else args.run_name,
             config=vars(args))
     
-    visualized_fig = analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, filename="./figures/sampled_images.jpg")
+    #visualized_fig = analysis.visualize_dataset(args.backbone_dataset_base_pth, args.backbone_dataset_name, man_aug=args.backbone_man_aug_setting, filename="./figures/sampled_images.jpg")
 
     """
     -----------------|
@@ -124,9 +125,10 @@ if __name__ == '__main__':
     """
     backbone_results = None
 
-    if not Path.exists(Path(args.backbone_pth)):
+    if not Path.exists(Path(args.backbone_pth)) or args.backbone_force_train:
         manager = Manager()
         backbone_ret = manager.dict()
+        if args.backbone_force_train: print(f"Backbone {args.backbone_pth} found, continuing training with this.")
         
         if device:
             if (('cpu' in device.type) or ('cuda' in device.type)) and not args.use_ddp: #either cpu or DP training
@@ -224,24 +226,35 @@ if __name__ == '__main__':
     # --Feature Extraction--
     for i in range(len(probing_datasets)):
         ds_name = probing_datasets[i]
+        print(f'Extracting layerwise features for OOD Dataset: {ds_name}')
         probe_results[ds_name] = []
 
         #load ood dataset and backbone
         train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth)
-        train_dataloader, test_dataloader = torch.utils.data.DataLoader(train, batch_size=args.probe_batch_size, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=args.probe_batch_size, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True)
+        train_dataloader, test_dataloader = DataLoader(train, batch_size=512, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=args.probe_batch_size, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True)
         backbone = Models.BackboneModel().load_backbone(args.backbone_pth, architecture=args.backbone_architecture, num_classes=100)
         
         #if we need: add in hooks, extract layerwise features, and save
         if 'resnet' in args.backbone_architecture or 'vgg' in args.backbone_architecture: #CNN
-            Models.CNNFeatureExtractor(backbone, probe_layers).extract_features(train_dataloader, probing_datasets[i])
+            Models.FeatureExtractor(backbone, probe_layers, model_arch=args.backbone_architecture).extract_features(train_dataloader, probing_datasets[i], split='train')
+            Models.FeatureExtractor(backbone, probe_layers, model_arch=args.backbone_architecture).extract_features(test_dataloader, probing_datasets[i], split='test')
         elif 'vit' in args.backbone_architecture: #vit
             pass
-    
+
     # --Probing With Extracted Features--
     for i in range(len(probing_datasets)):
         #run through each layer, attach probe head to saved features (stored in ds), and log probe training results
+        _, _, n_classes = probe.prep_data(probing_datasets[i], args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth)
         for j in range(len(probe_layers)):
             print(f'\nProbing dataset: {probing_datasets[i]} at probe layer: {probe_layers[j]}')
+
+            #prep feature data
+            train_feats = Models.FeatureExtractor(backbone, probe_layers, model_arch=args.backbone_architecture).get_features(probing_datasets[i], probe_layers[j], split='train')
+            test_feats = Models.FeatureExtractor(backbone, probe_layers, model_arch=args.backbone_architecture).get_features(probing_datasets[i], probe_layers[j], split='test')
+            train_feats, train_labels = train_feats['features'], train_feats['targets']
+            test_feats, test_labels = test_feats['features'], test_feats['targets']
+            train,test = (train_feats, train_labels), (test_feats, test_labels)
+            
             probe_ret = None 
             if device:
                 if (('cpu' in device.type) or ('cuda' in device.type)) and not args.use_ddp:
@@ -252,12 +265,8 @@ if __name__ == '__main__':
                         test,
                         n_classes,
                         probing_datasets[i],
-                        args.backbone_dataset_name,
-                        args.backbone_pth,
-                        args.backbone_architecture,
                         args.probe_architecture,
-                        probe_layers[j] if probe_layers else probe_layers,
-                        args.img_dims,
+                        probe_layers[j],
                         args.probe_lr,
                         args.probe_label_smoothing,
                         args.probe_epochs,
@@ -273,12 +282,8 @@ if __name__ == '__main__':
                         test,
                         n_classes,
                         probing_datasets[i],
-                        args.backbone_dataset_name,
-                        args.backbone_pth,
-                        args.backbone_architecture,
                         args.probe_architecture,
-                        probe_layers[j] if probe_layers else probe_layers,
-                        args.img_dims,
+                        probe_layers[j],
                         args.probe_lr,
                         args.probe_label_smoothing,
                         args.probe_epochs,
@@ -303,7 +308,7 @@ if __name__ == '__main__':
                         args.backbone_pth,
                         args.backbone_architecture,
                         args.probe_architecture,
-                        probe_layers[j] if probe_layers else probe_layers,
+                        probe_layers[j],
                         args.img_dims,
                         args.probe_lr,
                         args.probe_label_smoothing,
@@ -316,7 +321,7 @@ if __name__ == '__main__':
                 
             #collect results after probing one layer
             if probe_ret:
-                probe_ret = probe_ret[0]
+                probe_ret = probe_ret[0] if 0 in probe_ret else probe_ret
                 probe_results[probing_datasets[i]].append(probe_ret['max_test_acc'])
             else: 
                 print(f"No probing results for dataset {probing_datasets[i]} at layer {probe_layers[j]}")
@@ -332,7 +337,7 @@ if __name__ == '__main__':
 
         log_probe_layer_results(probing_datasets[i], probe_layers, id_layer_res, ood_layer_res)
         r, rho, A = analysis.compute_OOD_metrics(id_layer_res, ood_layer_res, id_ds, probing_datasets[i], id_class_count)
-        analysis.summarize_probe_experiments(wandb, extract_run_name(args.backbone_pth), probing_datasets[i], args.backbone_man_aug_setting, r, rho, A)
+        analysis.summarize_probe_experiments(wandb, extract_run_name(args.backbone_pth), probing_datasets[i], args.backbone_man_aug_setting, r, rho, A, args.backbone_pth)
 
     print(f'\nProbed all datasets for backbone.')
 

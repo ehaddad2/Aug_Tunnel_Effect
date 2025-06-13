@@ -39,6 +39,7 @@ def cpu_worker(device, num_workers, dataset_base_pth, dataset_name, architecture
     train_loader = DataLoader(train_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     test_loader = DataLoader(test_dataset, batch_size, num_workers=num_workers, pin_memory=True, persistent_workers=True)
     model = Models.BackboneModel().get_model(architecture, num_classes=num_classes).to(device)
+    if Path(backbone_pth).exists(): raise NotImplementedError("continued backbone training not implmemented for cpu worker")
     loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     if torch.cuda.is_available(): model = nn.DataParallel(model, device_ids=cuda_devices)
     model.to(device)
@@ -68,6 +69,10 @@ def ddp_worker(rank, world_size, num_workers, dataset_base_pth, dataset_name, ar
     train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, man_aug_setting, dataset_base_pth, rank==0)
 
     model = Models.BackboneModel().get_model(architecture, num_classes=num_classes).to(rank)
+    if Path(backbone_pth).exists() and rank == 0:
+        print(f"Loading existing backbone from {backbone_pth} to continue training with")
+        model.load_state_dict(torch.load(backbone_pth, map_location=f'cuda:{rank}'))
+    if rank==0: Models.print_model(model, input_size=(1, 3, img_dims, img_dims))
     ddp_model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED)
@@ -106,6 +111,7 @@ def tpu_worker(rank, num_workers, dataset_base_pth, dataset_name, architecture, 
     train_dataset, test_dataset, num_classes = prep_data(dataset_name, img_dims, man_aug_setting,  dataset_base_pth, xm.is_master_ordinal())
     device = xm.xla_device()
     model = Models.BackboneModel().get_model(architecture, num_classes=num_classes)
+    if Path(backbone_pth).exists(): raise NotImplementedError("continued backbone training not implmemented for tpu worker")
     model.to(device)
     xm.broadcast_master_param(model)
     train_sampler = torch.utils.data.distributed.DistributedSampler(

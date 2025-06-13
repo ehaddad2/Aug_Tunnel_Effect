@@ -3,8 +3,6 @@ import argparse
 import pandas
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, r2_score
-from combine_one_hot import combine_one_hot
-
 import shap
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,31 +20,25 @@ def main(data_path, metric, save_dir):
 
     print('\nLoading data from', data_path)
     df = pandas.read_csv(data_path)
-    # Define categorical columns
-    categorical_columns = ['CNN vs ViT']
-    for column in categorical_columns:
-        df[column] = df[column].astype('category')
+    print(df)
+    df.drop(columns=['Run Name', 'Dataset'])
     # Define input and target columnes (X and y)
-    x_columns = ['Stem','Spatial Reduction','CNN vs ViT', 'Augmentations', 'Resolution', 'ID Class Count', 'OverParam. Level', 'Depth']
+    x_columns = [f'manual_aug_{x}' for x in range(1, 15)]
     X = df[x_columns]
     y = df[metric]
     if metric == 'Percentage OOD retained':
         y = y/100
-    # One hot encoding for categorical variables
-    X_one_hot = pandas.get_dummies(X, sparse=True)
-    # Convert non-categorical ones into ordinal
-    non_categorical_columns = list(set(x_columns) - set(categorical_columns))
-    for column in non_categorical_columns:
-        X_one_hot[column] = pandas.factorize(X_one_hot[column], sort=True)[0]
-    # Convert all columns to float
-    X_one_hot = X_one_hot.astype(float)
+
+    categorical_columns = [] #none for this project
+
+    X_numeric = X.copy().astype(float)
     print('\tInput features:', x_columns)
     print('\tTarget metric:', metric)
 
 
     print('\nTraining model to predict', metric, 'from the input features')
-    model = GradientBoostingRegressor(random_state=0, loss='huber').fit(X_one_hot, y)
-    y_pred = model.predict(X_one_hot)
+    model = GradientBoostingRegressor(random_state=0, loss='huber').fit(X_numeric, y)
+    y_pred = model.predict(X_numeric)
     mse = mean_squared_error(y, y_pred)
     r2 = r2_score(y, y_pred)
     print('\tMSE:', mse)
@@ -55,11 +47,7 @@ def main(data_path, metric, save_dir):
 
     print('\nComputing SHAP values')
     explainer = shap.TreeExplainer(model)
-    shap_values = explainer(X_one_hot)
-    # Merge categorical SHAP values 
-    for column_name in categorical_columns:
-        shap_values,sv_occ = combine_one_hot(shap_values, column_name, [column_name in n for n in shap_values.feature_names])
-
+    shap_values = explainer(X_numeric)
 
     print('\nCalculating SHAP slopes')
     slopes_dict = {}

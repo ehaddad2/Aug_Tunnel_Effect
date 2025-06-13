@@ -286,22 +286,30 @@ def summarize_backbone_experiments(wandb, run_name, backbone_arch, man_augs, max
     df.to_csv(save_pth, index=False)
     return df
 
-def summarize_probe_experiments(wandb, backbone_run_name, dataset, man_augs, r, rho, A, save_pth="./csv_results/Probes.csv"):
-    os.makedirs(os.path.dirname(save_pth), exist_ok=True)
+def summarize_probe_experiments(wandb, backbone_run_name, dataset, man_augs, r, rho, A, backbone_pth):
     row = [backbone_run_name, dataset, r, rho, A] + man_augs 
-    columns = ["Run Name", "Dataset", "% OOD Performance Retained", "Pearson Correlation", "ID/OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
+    columns = ["Run Name", "Dataset", "Percentage OOD retained", "Pearson Correlation", "ID OOD Alignment"] + [f"manual_aug_{i+1}" for i in range(len(man_augs))]
+    path_parts = backbone_pth.split('/')
+    model_arch = path_parts[-3]
+    aug_number = path_parts[-1].split(':')[-1].replace('.pth', '')
+    probe_pth = f"./csv_results/{model_arch}/Probes_{aug_number}.csv"
+    os.makedirs(os.path.dirname(probe_pth), exist_ok=True)
 
-    if os.path.exists(save_pth):
-        df = pd.read_csv(save_pth)
+    if os.path.exists(probe_pth):
+        df = pd.read_csv(probe_pth)
         new_row = pd.DataFrame([row], columns=columns)
         df = pd.concat([df, new_row], ignore_index=True)
     else:
         df = pd.DataFrame([row], columns=columns)
-    df.to_csv(save_pth, index=False)
+    print(f"Saving probe data to: {probe_pth}")
+    df.to_csv(probe_pth, index=False)
 
     #log onto wandb
     if wandb.run is not None:
-        table = wandb.Table(data=df, columns=columns)
+        table_data = []
+        for _, row_data in df.iterrows():
+            table_data.append(list(row_data))
+        table = wandb.Table(columns=columns, data=table_data)
         wandb.log({"Probe Summary": table})
 
 def compute_overparam_val(backbone_name, dataset_pth, dataset_name):

@@ -4,8 +4,11 @@ import torch.nn as nn
 import torchvision
 from functools import partial
 from timm.models.vision_transformer import VisionTransformer, _cfg
-import os
+from pathlib import Path
 from tqdm import tqdm
+import torch.nn.functional as F
+from torchinfo import summary
+
 
 class BackboneModel:
     class ResNet10(ResNet):
@@ -135,16 +138,27 @@ class BackboneModel:
         model = self.model_architectures[architecture.lower()](num_classes)
         return model
     
-class CNNFeatureExtractor:
-    def __init__(self, backbone, layer_names, cache_dir="./features_cache", model_arch=None):
+    
+class lp1(nn.Module):
+    def __init__(self, dim, num_classes=100):
+        super(lp1, self).__init__()
+        self.linear = nn.Linear(dim, num_classes)
+        self.linear.weight.data.normal_(mean=0.0, std=0.01)
+        self.linear.bias.data.zero_()
+
+    def forward(self, x):
+        return self.linear(x) 
+
+class FeatureExtractor:
+    def __init__(self, backbone, layer_names, cache_dir="./features_cache", model_arch=None, model_type="cnn"):
         self.backbone = backbone
         self.layer_names = layer_names
-        self.cache_dir = cache_dir
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.features_cache = {}
-        self.hook_features = {}
-        self.model_arch = model_arch
-        
-        os.makedirs(cache_dir, exist_ok=True)
+        self.activations = {}
+        self.model_arch = model_arch or type(backbone).__name__
+        self.model_type = model_type.lower()
         
         if hasattr(self.backbone, 'classifier'): self.backbone.classifier = nn.Identity()
         elif hasattr(self.backbone, 'fc'): self.backbone.fc = nn.Identity()
@@ -153,243 +167,103 @@ class CNNFeatureExtractor:
         for param in self.backbone.parameters():
             param.requires_grad = False
             
-        self._register_hooks()
+        self.hooks = self.register_hooks()
+        if torch.cuda.is_available(): self.backbone = self.backbone.cuda()
+
+    def register_hooks(self):
+        hooks = {}
+        def _get_activation(layer):
+            def hook(module, input, output): #prep hooks
+                if self.model_type == "cnn":
+                    pooled = F.adaptive_avg_pool2d(output, (1, 1))
+                    self.activations[layer] = torch.flatten(pooled, 1).detach()
+
+                elif self.model_type == "vit": #TODO: verify
+                    if len(output.shape) == 3:  # ViT output [B, N+1, D]
+                        # Extract image tokens (exclude class token)
+                        image_tokens = output[:, 1:, :]
+                        # Apply global average pooling
+                        self.activations[layer] = torch.mean(image_tokens, dim=1).detach()
+                    else:
+                        self.activations[layer] = output.detach()
+            return hook
+        
+        for name, module in self.backbone.named_modules(): #attach hooks
+            if name in self.layer_names:
+                hooks[name] = module.register_forward_hook(_get_activation(name))
+                
+        return hooks
+
+    def check_features_exist(self, dataset_name, split):
+        feature_dir = self.cache_dir / self.model_arch / dataset_name / split
+
+        if not feature_dir.exists():
+            return False
+        return True
     
-    def _register_hooks(self):
-        for layer_name in self.layer_names:
-            for name, module in self.backbone.named_modules():
-                if name == layer_name:
-                    module.register_forward_hook(self._hook_fn(layer_name))
-                    break
-    
-    def _hook_fn(self, layer_name):
-        def hook(module, input, output):
-            feats = output
-            feats = nn.AdaptiveAvgPool2d((2, 2))(feats) #only pool after last layer
-            feats = feats.view(feats.size(0), -1)
+    def save_features(self, features, targets, dataset_name, split):
+        feature_dir = self.cache_dir / self.model_arch / dataset_name / split
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        
+        for k in features:
+            data_dict = {'features': features[k], 'targets': targets} #pair layerwise features with ood ds target
+            feature_file = feature_dir / f"{k}.pt"
+            torch.save(data_dict, feature_file)
+            print(f'Saved features at {feature_file}')
             
-            if layer_name not in self.hook_features:
-                self.hook_features[layer_name] = []
-            self.hook_features[layer_name].append(feats.cpu().detach())
-        return hook
+            self.features_cache[f"{split}_{dataset_name}_{k}"] = data_dict
     
-    def extract_features(self, dataloader, dataset_name, force_recompute=False):
-        dataset_dir = os.path.join(self.cache_dir, self.model_name, dataset_name)
-        os.makedirs(dataset_dir, exist_ok=True)
+    def extract_features(self, dataloader, dataset_name, split='train', force_recompute=False):
 
-        if not force_recompute:
-            all_cached = all(os.path.exists(os.path.join(dataset_dir, f"{layer}.pt")) for layer in self.layer_names)
-            if all_cached:
-                for layer_name in self.layer_names:
-                    cache_path = os.path.join(dataset_dir, f"{layer_name}.pt")
-                    with open(cache_path, 'rb') as f:
-                        self.features_cache[f"{dataset_name}_{layer_name}"] = torch.load(f)
-                return
+        if not force_recompute and self.check_features_exist(dataset_name, split):
+            print(f"Features for {dataset_name} ({split}) already exist. Loading from cache.")
+            self.load_features(dataset_name, split)
+            return
         
-        self.hook_features = {}
-        labels = []
-        with torch.no_grad(): #run through ood dataset and let hooks store features
-            for batch_data, batch_labels in tqdm(dataloader):
-                if torch.cuda.is_available():
-                    batch_data = batch_data.cuda()
-                    self.backbone = self.backbone.cuda()
-                
-                _ = self.backbone(batch_data)
-                labels.append(batch_labels)
-        
-        labels = torch.cat(labels, dim=0)
-        
-        for layer_name in self.layer_names: #collect layerwise features and save
-            if layer_name in self.hook_features:
-                features = torch.cat(self.hook_features[layer_name], dim=0)
-                feature_data = {'features': features, 'labels': labels}
-                
-                cache_path = os.path.join(dataset_dir, f"{layer_name}.pt")
-                with open(cache_path, 'wb') as f:
-                    torch.save(feature_data, f)
-                
-                self.features_cache[f"{dataset_name}_{layer_name}"] = feature_data
-    
-    def get_features(self, dataset_name, layer_name):
-        return self.features_cache[f"{dataset_name}_{layer_name}"]
-    
-class ViTHookProbe(nn.Module):
-    def __init__(self, backbone, probe_layer, num_classes):
-        super().__init__()
-        self.backbone = backbone
-        if hasattr(self.backbone, 'head'):
-            self.backbone.head = nn.Identity()
-        self.backbone.eval()
-        for param in backbone.parameters():
-            param.requires_grad = False
-        self.probe_layer = probe_layer
-        self.probe_features = None
-        self.classifier = nn.Linear(backbone.embed_dim, num_classes)
-        self._register_hook()
-    
-    def _register_hook(self):
-        def hook_fn(module, input, output):
-            if isinstance(output, tuple):
-                output = output[0]
-            #skip the class token and average the patch tokens
-            if output.dim() == 3 and output.size(1) > 1:  #shape = [B, N, C]
-                self.probe_features = output[:, 1:].mean(dim=1)  #GAP over patch tokens
-            else:
-                self.probe_features = output
-        
-        #look for probing layer, attach hook
-        for name, module in self.backbone.named_modules():
-            if name == self.probe_layer:
-                module.register_forward_hook(hook_fn)
-                break
-    
-    def forward(self, x):
-        self.backbone(x)
-        return self.classifier(self.probe_features)
-    
-
-class CNNProbe(nn.Module):
-    """
-    sequential-based CNN probe
-    """
-    def __init__(self, backbone, probe_layer, num_classes, img_dims):
-        super().__init__()
-        self.backbone = backbone
-        self.probe_layer = probe_layer
-        self.num_classes = num_classes
-        self.img_dims = img_dims
-        
-        #prepare backbone
-        if hasattr(self.backbone, 'classifier'): 
-            self.backbone.classifier = nn.Identity()
-        elif hasattr(self.backbone, 'fc'): 
-            self.backbone.fc = nn.Identity()
-        
-        self.backbone.eval()
-        for param in self.backbone.parameters():
-            param.requires_grad = False
-        
-        #build probe
-        self.feature_extractor = self._create_feature_extractor()
-        self._setup_classifier()
-    
-    def _create_feature_extractor(self):
-        """create sequential feature extractor up to probe layer"""
-        
-        if hasattr(self.backbone, 'conv1'): #resnet
-            return self._create_resnet_extractor()
-        
-        elif hasattr(self.backbone, 'features'): #vgg
-            return self._create_vgg_extractor()
-        
-        else:
-            raise ValueError(f"Unsupported backbone architecture used for CNN probing: {self.backbone}")
-    
-    def _create_resnet_extractor(self):
-        """Create ResNet feature extractor"""
-        layers = []
-        
-        if self.probe_layer == "conv1":
-            layers.append(self.backbone.conv1)
-            return nn.Sequential(*layers)
-        
-        layers.extend([ #backbone prologue
-            self.backbone.conv1,
-            self.backbone.bn1,
-            self.backbone.relu,
-            self.backbone.maxpool
-        ])
-        
-        #unpack 'layer' set
-        if "layer" in self.probe_layer:
-            parts = self.probe_layer.split('.')
-            layer_name, block_idx, conv_name = parts[0], int(parts[1]), parts[2]
-            layer_names = ['layer1', 'layer2', 'layer3', 'layer4']
-            target_layer_idx = int(layer_name[len(layer_name)-1])-1
-            
-            for i in range(target_layer_idx): #add previous layers
-                if hasattr(self.backbone, layer_names[i]):
-                    layers.append(getattr(self.backbone, layer_names[i]))
-            
-            #add layer block components
-            if hasattr(self.backbone, layer_name):
-                target_layer = getattr(self.backbone, layer_name)
-                
-                for i in range(block_idx): #add previous blocks
-                    layers.append(target_layer[i])
-                
-                #add in remaining (partial) block
-                target_block = target_layer[block_idx]
-                if conv_name == "conv1":
-                        layers.append(target_block.conv1)
-                elif conv_name == "conv2":
-                    layers.extend([
-                        target_block.conv1,
-                        target_block.bn1,
-                        target_block.relu,
-                        target_block.conv2
-                    ])
-
-            else:
-                raise ModuleNotFoundError(f"CNN PROBE ERROR: {layer_name} not found in backbone!")
-        return nn.Sequential(*layers)
-    
-    def _create_vgg_extractor(self):
-        target_idx = int(self.probe_layer.split('.')[-1])
-        feature_layers = list(self.backbone.features.children())
-        layers = feature_layers[:target_idx + 1]
-        return nn.Sequential(*layers)
-
-    
-    def _setup_classifier(self):
-        """connect feature extractor with probe head"""
-
+        features = {layer: [] for layer in self.layer_names}
+        all_targets = []
         with torch.no_grad():
-            dummy_input = torch.randn(1, 3, self.img_dims, self.img_dims)
-            if next(self.backbone.parameters()).is_cuda:
-                dummy_input = dummy_input.cuda()
-            
-            features = self.feature_extractor(dummy_input)
-            
-            if len(features.shape) == 4:  #feature shape: [B, C, H, W], ie: we only attach probe after conv layers
-                pooled = nn.AdaptiveAvgPool2d((2, 2))(features)
-                flattened_size = pooled.view(pooled.size(0), -1).shape[1]
+            for inputs, targets in tqdm(dataloader, desc=f"Extracting {split} features"):
 
-            else:
-                raise ValueError(f"Unexpected feature shape: {features.shape}")
+                if torch.cuda.is_available(): inputs = inputs.cuda()
+                self.activations = {}
+                _ = self.backbone(inputs)
+                
+                for layer in self.layer_names:
+                    features[layer].append(self.activations[layer].cpu())
+                
+                all_targets.append(targets)
         
-        #construct probe head
-        classifier = nn.Linear(flattened_size, self.num_classes)
-        classifier.weight.data.normal_(mean=0, std=0.01)
-        classifier.bias.data.zero_()
-
-        self.probe_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((2, 2)),
-            nn.Flatten(),
-            classifier
-        )
+        concatenated_features = {}
+        for layer in self.layer_names:
+            concatenated_features[layer] = torch.cat(features[layer], 0)
+        
+        all_targets = torch.cat(all_targets, 0)
+        self.save_features(concatenated_features, all_targets, dataset_name, split)
     
-    def forward(self, x):
-        # Extract features
-        features = self.feature_extractor(x)
-        output = self.probe_head(features)
-        return output
+    def load_features(self, dataset_name, split):
+        feature_dir = self.cache_dir / self.model_arch / dataset_name / split
+        
+        for layer_name in self.layer_names:
+            feature_file = feature_dir / f"{layer_name}.pt"
+            if feature_file.exists():
+                data = torch.load(feature_file)
+                self.features_cache[f"{split}_{dataset_name}_{layer_name}"] = data
+    
+    def get_features(self, dataset_name, layer_name, split='train'):
+        cache_key = f"{split}_{dataset_name}_{layer_name}"
+        if cache_key not in self.features_cache:
+            self.load_features(dataset_name, split)
 
+        return self.features_cache.get(cache_key, None)
 
-
-
-
-
+        
 """
 Helper classes & Functions
 """
 
-def print_model(model:nn.Module):
-    print(model)
-    print("\nTrainable Layers:")
-    for name, param in model.named_parameters():
-        if param.requires_grad: print(f"{name} (trainable)")       
-        else: print(f"{name} (frozen)")
+def print_model(model:nn.Module, input_size=(1, 3, 224, 224)):
+    summary(model, input_size)
     
 def get_all_probe_layer_names(args):
     backbone_name = args.backbone_architecture.lower()
@@ -399,3 +273,6 @@ def get_all_probe_layer_names(args):
     print(f"Warning: No predefined layers for architecture '{backbone_name}'. Using empty list.")
     return []
 
+arch_to_probe = {
+    'lp1': lp1
+}
