@@ -5,3 +5,6 @@ wandb
 args
 ws.py
 ImageNet-100
+legacy_code
+features_cache
+csv_results

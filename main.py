@@ -17,6 +17,7 @@ import pandas as pd, re
 import hashlib
 import csv
 from torch.utils.data import DataLoader
+import timeit
 
 SEED = 30
 
@@ -98,6 +99,7 @@ def extract_run_name(backbone_pth):
     return run_name
 
 if __name__ == '__main__':
+    start_time = timeit.timeit()
     args = parse_args()
     device = None
     if not args.use_tpu: 
@@ -380,4 +382,6 @@ if __name__ == '__main__':
             
     """
     if args.use_wandb: wandb.finish()
+    end_time = timeit.timeit()
+    print(f'TOTAL TIME: {end_time-start_time}')
     
