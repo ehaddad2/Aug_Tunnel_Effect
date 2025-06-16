@@ -9,7 +9,6 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from torchinfo import summary
 
-
 class BackboneModel:
     class ResNet10(ResNet):
         def __init__(self, num_classes=1000):

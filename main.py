@@ -17,7 +17,8 @@ import pandas as pd, re
 import hashlib
 import csv
 from torch.utils.data import DataLoader
-import timeit
+from datetime import datetime
+import gc
 
 SEED = 30
 
@@ -98,8 +99,11 @@ def extract_run_name(backbone_pth):
     run_name = f"{model} + {dataset} + {mode}"
     return run_name
 
+
+
 if __name__ == '__main__':
-    start_time = timeit.timeit()
+
+    start_time = datetime.now()
     args = parse_args()
     device = None
     if not args.use_tpu: 
@@ -233,7 +237,7 @@ if __name__ == '__main__':
 
         #load ood dataset and backbone
         train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth)
-        train_dataloader, test_dataloader = DataLoader(train, batch_size=512, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=args.probe_batch_size, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True)
+        train_dataloader, test_dataloader = DataLoader(train, batch_size=512, num_workers=os.cpu_count(), pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=256, num_workers=os.cpu_count(), pin_memory=True, persistent_workers=True)
         backbone = Models.BackboneModel().load_backbone(args.backbone_pth, architecture=args.backbone_architecture, num_classes=100)
         
         #if we need: add in hooks, extract layerwise features, and save
@@ -242,6 +246,11 @@ if __name__ == '__main__':
             Models.FeatureExtractor(backbone, probe_layers, model_arch=args.backbone_architecture).extract_features(test_dataloader, probing_datasets[i], split='test')
         elif 'vit' in args.backbone_architecture: #vit
             pass
+    
+    #post-feature collect cleanup
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
 
     # --Probing With Extracted Features--
     for i in range(len(probing_datasets)):
@@ -381,7 +390,8 @@ if __name__ == '__main__':
             analysis.summarize_probe_experiments(wandb, extract_run_name(args.backbone_pth), ood_ds, args.backbone_man_aug_setting, r, rho, A)
             
     """
+    #cleanup
     if args.use_wandb: wandb.finish()
-    end_time = timeit.timeit()
+    end_time = datetime.now()
     print(f'TOTAL TIME: {end_time-start_time}')
     
