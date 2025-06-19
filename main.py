@@ -237,7 +237,7 @@ if __name__ == '__main__':
 
         #load ood dataset and backbone
         train, test, n_classes = probe.prep_data(ds_name, args.img_dims, args.probe_datasets_base_pth if i>0 else args.backbone_dataset_base_pth)
-        train_dataloader, test_dataloader = DataLoader(train, batch_size=512, num_workers=os.cpu_count(), pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=256, num_workers=os.cpu_count(), pin_memory=True, persistent_workers=True)
+        train_dataloader, test_dataloader = DataLoader(train, batch_size=512, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True), torch.utils.data.DataLoader(test, batch_size=256, num_workers=args.loader_workers, pin_memory=True, persistent_workers=True)
         backbone = Models.BackboneModel().load_backbone(args.backbone_pth, architecture=args.backbone_architecture, num_classes=100)
         
         #if we need: add in hooks, extract layerwise features, and save
