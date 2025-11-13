@@ -24,10 +24,10 @@ in development
 
     1. aug combos => `done`
     3. scale down to 32 x 32 => `done`
-    4. test out and analyze results on some manual augs/aug polices (record aug configs as inputs into SHAP) => `in progress`
-    5. add in more architectures (VGG, DenseNet, etc) `not done`
+    4. test out and analyze results on some manual augs/aug polices (record aug configs as inputs into SHAP) => `done`
+    5. add in more architectures (VGG, DenseNet, etc) `done`
 
-3. Re-run probes => `in progress`
+3. Re-run probes => `done`
 
     1. more OOD datasets (eventually audio)
         
@@ -48,10 +48,10 @@ in development
             (AudioSet)
             (Common Voice)
 
-    2. Predict % OOD performance retained, Pearson Correlation, ID/OOD alignmentbased on probe results => `in progress`
+    2. Predict % OOD performance retained, Pearson Correlation, ID/OOD alignmentbased on probe results => `done`
 
-4. Build GB SHAP model, collect all ID/OOD results, and run through it => `not done`
-5. Peform analysis based on trained SHAP, if more analysis is needed, use 224 x 224 for those experiments. => `not done`
+4. Build GB SHAP model, collect all ID/OOD results, and run through it => `done`
+5. Peform analysis based on trained SHAP, if more analysis is needed, use 224 x 224 for those experiments. => `done`
 
 ## Dataset Details
 
